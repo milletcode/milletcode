@@ -2404,7 +2404,12 @@ mod reclaim_tests {
 
     #[test]
     fn local_process_start_time_none_for_dead_pid() {
-        assert!(local_process_start_time(4).is_none());
+        // 固定低 PID 并不保证已死：Linux 上 PID 4 是常驻内核线程（kworker）。
+        // 可移植的死 PID = 自己 spawn 并已 wait 回收的子进程。
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        assert!(local_process_start_time(pid).is_none());
     }
 
     #[test]
