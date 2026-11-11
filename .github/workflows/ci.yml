@@ -15,6 +15,8 @@ concurrency:
 
 permissions:
   contents: read
+  # 读取本 workflow 自身的 job 日志，用于失败时把错误回显成注解
+  actions: read
 
 env:
   IMAGE: milletcode/milletcode
@@ -33,7 +35,23 @@ jobs:
       - name: Prepare empty frontend dist
         run: mkdir -p frontend-svelte/dist
       - name: cargo test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked --no-fail-fast
+      # 失败时拉取本 job 自己的日志，把 error / 失败测试名回显为注解
+      # （注解可匿名从 API 读取，无需到网页翻日志）
+      - name: Surface failures as annotations
+        if: failure()
+        run: |
+          set -eu
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions"
+          auth="Authorization: Bearer ${GITHUB_TOKEN}"
+          job_id=$(curl -sf -H "$auth" "$api/runs/${GITHUB_RUN_ID}/jobs" \
+            | python3 -c 'import json,sys; print([j["id"] for j in json.load(sys.stdin)["jobs"] if j["name"].startswith("test-backend")][0])')
+          curl -sfL -H "$auth" "$api/jobs/${job_id}/logs" -o /tmp/job.log
+          grep -E '^(error|failures:|---- |test result: FAILED|thread .* panicked)' -A 2 /tmp/job.log \
+            | head -24 | sed 's/::/ | /g' \
+            | while IFS= read -r line; do
+                [ -n "$line" ] && echo "::error::${line}"
+              done || true
 
   test-frontend:
     runs-on: ubuntu-latest
