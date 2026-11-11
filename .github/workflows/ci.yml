@@ -29,7 +29,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95
       - uses: Swatinem/rust-cache@v2
       - name: cargo test
-        run: cargo test --workspace --locked
+        run: |
+          set -o pipefail
+          status=0
+          cargo test --workspace --locked 2>&1 | tee /tmp/cargo-test.log || status=1
+          if [ "$status" -ne 0 ]; then
+            # 编译错误回显为 Actions 注解（注解可匿名从 API 读取，方便定位）
+            grep -E '^error' -A 3 /tmp/cargo-test.log | head -12 | sed 's/::/ | /g' \
+              | while IFS= read -r line; do echo "::error::${line}"; done
+          fi
+          exit "$status"
 
   test-frontend:
     runs-on: ubuntu-latest
