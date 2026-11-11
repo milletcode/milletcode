@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main, staging]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: milletcode/milletcode
+
+jobs:
+  test-backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test
+        run: cargo test --workspace --locked
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend-svelte
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      # build 内含 svelte-check + vite build
+      - run: npm run build
+
+  # main 分支 release：双架构原生 runner 各自构建推送，再合并 manifest。
+  # ubuntu-24.04-arm 仅公开仓库免费；仓库转私有时此 job 会无 runner 可用。
+  build:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test-backend, test-frontend]
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Compute short sha
+        run: echo "SHA8=${GITHUB_SHA::8}" >> "$GITHUB_ENV"
+      - name: Build and push per-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          load: true
+          tags: ${{ env.IMAGE }}:main-${{ env.SHA8 }}-${{ matrix.arch }}
+          build-args: |
+            GIT_VERSION=main-${{ env.SHA8 }}
+            GIT_COMMIT=${{ github.sha }}
+            GIT_BRANCH=main
+          cache-from: type=gha,scope=build-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=build-${{ matrix.arch }}
+      - name: Extract release binary
+        run: |
+          id=$(docker create "${IMAGE}:main-${SHA8}-${{ matrix.arch }}")
+          docker cp "$id":/app/milletcode "./milletcode-linux-${{ matrix.arch }}"
+          docker rm "$id"
+          chmod +x "milletcode-linux-${{ matrix.arch }}"
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: milletcode-linux-${{ matrix.arch }}
+          path: milletcode-linux-${{ matrix.arch }}
+          if-no-files-found: error
+
+  # 合并双架构 manifest 成最终 tag：main-<sha8>（可追溯）+ latest（最新稳定）
+  merge:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Merge multi-arch manifest
+        run: |
+          SHA8=${GITHUB_SHA::8}
+          docker buildx imagetools create \
+            -t "${IMAGE}:main-${SHA8}" \
+            -t "${IMAGE}:latest" \
+            "${IMAGE}:main-${SHA8}-amd64" \
+            "${IMAGE}:main-${SHA8}-arm64"
