@@ -1,0 +1,34 @@
+# Rust
+target/
+
+# Node.js
+node_modules/
+dist/
+.vite/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
+
+# Logs
+*.log
+
+# Claude Code — settings carry this machine's hook URLs and session names
+.claude/settings.json
+.claude/settings.local.json
+
+# 彩蛋：本机私藏的 debug 悬浮球图标（版权素材，不随仓库分发）。
+# 想用自定义图标时在 config.toml 配 [debug] icon_path 指向本地文件。
+frontend-svelte/src/assets/debug-icon-48.png
+frontend-svelte/src/assets/eous.png

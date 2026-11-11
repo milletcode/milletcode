@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: biz
+
+labels:
+  - includeSelectors: true
+    pairs:
+      tier: milletcode
+      monit: actived
+
+resources:
+  - deployment.yaml
+  - service.yaml
+
+configMapGenerator:
+  - name: milletcode-plain-config
+    literals:
+      - RUST_LOG=info
+  - name: milletcode-files-config
+    literals:
+      - placeholder=empty
+
+secretGenerator:
+  - name: milletcode-secret-config

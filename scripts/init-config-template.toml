@@ -1,0 +1,38 @@
+# MilletCode 本地最小化配置 — make init-config 生成（模板）。
+# __PASSWORD__ 由 Makefile 注入随机密码；字段变更须与 backend config.rs 的
+# init_config_template_tests 同步（测试 include_str! 本文件锁住字段名）。
+# 默认非 debug 模式（调试面板关闭）；需要时启动前 export MILLET_ENV=debug。
+
+# 登录认证：plain 表单模式（账号/密码随机生成，见 auth.plain）
+[auth]
+mode = "plain"
+
+[auth.plain]
+user = "__USER__"
+password = "__PASSWORD__"
+
+# SSH：~ 由后端运行时按当前用户 home 展开，不落绝对路径
+[ssh]
+config_path = "~/.ssh/config"
+
+# 项目工作区：本地两个代码目录
+[project]
+allow_create = true
+allow_archive = true
+allow_delete = true
+
+[project.discovery_paths.milletcode]
+path = "~/Codes/milletcode"
+hostname = ""
+remote_mode = ""
+is_mobile_home = false
+sync_settings = true
+sync_models = true
+
+[project.discovery_paths.smartcode]
+path = "~/Codes/smartcode"
+hostname = ""
+remote_mode = ""
+is_mobile_home = false
+sync_settings = true
+sync_models = true

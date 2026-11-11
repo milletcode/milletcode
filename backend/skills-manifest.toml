@@ -1,0 +1,19 @@
+# 官方技能包清单 — 随版本发布（include_str! 嵌入二进制）。
+# 每个包一个 [[skill]]：名称、描述、内联 SVG 图标。
+# 下载地址与 7z 解压密码都不在清单里：由 config.toml 的 [skills]
+# official_base_url（基础地址，包地址 = base/{name}.7z）与 official_password 提供。
+
+[[skill]]
+name = "git"
+description = "Git 工作流技能：提交、分支、标签与 Gitea issue 协作"
+icon = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M23.546 10.893 13.1.452a1.548 1.548 0 0 0-2.19 0l-2.175 2.175 2.759 2.76a1.836 1.836 0 0 1 2.327 2.334l2.659 2.66a1.836 1.836 0 1 1-1.1 1.037l-2.478-2.478v6.523a1.836 1.836 0 1 1-1.511-.053V8.993a1.836 1.836 0 0 1-.997-2.407L8.05 4.24l-7.597 7.597a1.549 1.549 0 0 0 0 2.19l10.442 10.441a1.548 1.548 0 0 0 2.19 0l10.46-10.46a1.55 1.55 0 0 0 0-2.191z"/></svg>"""
+
+[[skill]]
+name = "millet-msg"
+description = "当 Agent 闲置时用飞书通知你，让你生产力更高"
+icon = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>"""
+
+[[skill]]
+name = "milletcode-project-init"
+description = "用官方推荐的技术栈初始化你的项目"
+icon = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>"""

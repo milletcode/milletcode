@@ -1,0 +1,56 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: milletcode
+  labels:
+    tier: milletcode
+    monit: actived
+spec:
+  selector:
+    matchLabels:
+      tier: milletcode
+  template:
+    metadata:
+      labels:
+        tier: milletcode
+        monit: actived
+    spec:
+      containers:
+        - name: milletcode
+          image: "milletcode:latest"
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+            - name: MILLET_ENV
+              value: production
+          envFrom:
+            - configMapRef:
+                name: milletcode-plain-config
+            - secretRef:
+                name: milletcode-secret-config
+          volumeMounts:
+            - name: config-files
+              mountPath: /root/.milletcode/config.toml
+              subPath: config.toml
+            - name: code-storage
+              mountPath: /codes
+            - name: db-storage
+              mountPath: /config
+          ports:
+            - containerPort: 3030
+              name: http
+      volumes:
+        - name: config-files
+          configMap:
+            name: milletcode-files-config
+        - name: code-storage
+          hostPath:
+            path: /mnt/data/storage/milletcode-codes-group/cnli
+            type: DirectoryOrCreate
+        - name: db-storage
+          hostPath:
+            path: /mnt/data/storage/milletcode-db-group/cnli
+            type: DirectoryOrCreate
+      imagePullSecrets:
+        - name: image-registry-secret

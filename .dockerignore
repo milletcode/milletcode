@@ -1,0 +1,14 @@
+# 构建上下文瘦身。Dockerfile 实际只用得到：frontend-svelte/、backend/、
+# Cargo.toml、Cargo.lock、CHANGELOG.md（include_str 嵌入更新日志正文）。
+# 其余一律不进上下文——根目录 target/ 动辄数 GB，全量上传一遍就是白等。
+.git
+target
+backend/target
+frontend
+frontend-svelte/node_modules
+frontend-svelte/dist
+docs
+deploy
+scripts
+*.log
+*.db
