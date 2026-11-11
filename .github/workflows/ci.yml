@@ -28,17 +28,12 @@ jobs:
       # 钉 1.95：与 Dockerfile（rust:1.95-alpine）及本地开发工具链一致
       - uses: dtolnay/rust-toolchain@1.95
       - uses: Swatinem/rust-cache@v2
+      # rust-embed 在编译期要求 ../frontend-svelte/dist 存在（static_files.rs），
+      # 单测不读其内容，预建空目录即可；本地因 dist 常在从未暴露
+      - name: Prepare empty frontend dist
+        run: mkdir -p frontend-svelte/dist
       - name: cargo test
-        run: |
-          set -o pipefail
-          status=0
-          cargo test --workspace --locked 2>&1 | tee /tmp/cargo-test.log || status=1
-          if [ "$status" -ne 0 ]; then
-            # 编译错误回显为 Actions 注解（注解可匿名从 API 读取，方便定位）
-            grep -E '^error' -A 3 /tmp/cargo-test.log | head -12 | sed 's/::/ | /g' \
-              | while IFS= read -r line; do echo "::error::${line}"; done
-          fi
-          exit "$status"
+        run: cargo test --workspace --locked
 
   test-frontend:
     runs-on: ubuntu-latest
