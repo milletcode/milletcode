@@ -5,6 +5,8 @@ on:
     branches: [main, staging]
   pull_request:
     branches: [main, staging]
+  # 手动触发：调试期在 feat 分支上点按钮跑测试，不必动主干分支
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
