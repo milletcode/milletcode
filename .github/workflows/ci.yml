@@ -2,10 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main, staging]
+    # feat/** 分支 push 自跑测试（不打包）；打包由 build job 的 if 门控到 main/staging
+    branches: [main, staging, "feat/**"]
   pull_request:
     branches: [main, staging]
-  # 手动触发：调试期在 feat 分支上点按钮跑测试，不必动主干分支
+  # 手动触发：任意分支点按钮跑测试，不必动主干分支
   workflow_dispatch:
 
 concurrency:
@@ -45,10 +46,11 @@ jobs:
       # build 内含 svelte-check + vite build
       - run: npm run build
 
-  # main 分支 release：双架构原生 runner 各自构建推送，再合并 manifest。
+  # 打包门控：push 到 main / staging 才构建。双架构原生 runner 各自构建推送，
+  # 再由 merge 合并 manifest。镜像 tag：main → latest + main-<sha8>；staging → staging。
   # ubuntu-24.04-arm 仅公开仓库免费；仓库转私有时此 job 会无 runner 可用。
   build:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging')
     needs: [test-backend, test-frontend]
     strategy:
       matrix:
@@ -67,8 +69,15 @@ jobs:
           registry: docker.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Compute short sha
-        run: echo "SHA8=${GITHUB_SHA::8}" >> "$GITHUB_ENV"
+      # 分支感知的临时 per-arch tag 与版本号：main-<sha8>-<arch> / staging-<sha8>-<arch>
+      - name: Compute branch tags
+        run: |
+          SHA8=${GITHUB_SHA::8}
+          BRANCH=${GITHUB_REF#refs/heads/}
+          echo "SHA8=$SHA8" >> "$GITHUB_ENV"
+          echo "PER_ARCH_TAG=${IMAGE}:${BRANCH}-${SHA8}-${{ matrix.arch }}" >> "$GITHUB_ENV"
+          echo "GIT_VERSION=${BRANCH}-${SHA8}" >> "$GITHUB_ENV"
+          echo "BRANCH=$BRANCH" >> "$GITHUB_ENV"
       - name: Build and push per-arch image
         uses: docker/build-push-action@v6
         with:
@@ -76,16 +85,16 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           push: true
           load: true
-          tags: ${{ env.IMAGE }}:main-${{ env.SHA8 }}-${{ matrix.arch }}
+          tags: ${{ env.PER_ARCH_TAG }}
           build-args: |
-            GIT_VERSION=main-${{ env.SHA8 }}
+            GIT_VERSION=${{ env.GIT_VERSION }}
             GIT_COMMIT=${{ github.sha }}
-            GIT_BRANCH=main
+            GIT_BRANCH=${{ env.BRANCH }}
           cache-from: type=gha,scope=build-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=build-${{ matrix.arch }}
       - name: Extract release binary
         run: |
-          id=$(docker create "${IMAGE}:main-${SHA8}-${{ matrix.arch }}")
+          id=$(docker create "${PER_ARCH_TAG}")
           docker cp "$id":/app/milletcode "./milletcode-linux-${{ matrix.arch }}"
           docker rm "$id"
           chmod +x "milletcode-linux-${{ matrix.arch }}"
@@ -96,9 +105,9 @@ jobs:
           path: milletcode-linux-${{ matrix.arch }}
           if-no-files-found: error
 
-  # 合并双架构 manifest 成最终 tag：main-<sha8>（可追溯）+ latest（最新稳定）
+  # 合并双架构 manifest：main → main-<sha8>（可追溯）+ latest；staging → staging
   merge:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging')
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -111,8 +120,15 @@ jobs:
       - name: Merge multi-arch manifest
         run: |
           SHA8=${GITHUB_SHA::8}
-          docker buildx imagetools create \
-            -t "${IMAGE}:main-${SHA8}" \
-            -t "${IMAGE}:latest" \
-            "${IMAGE}:main-${SHA8}-amd64" \
-            "${IMAGE}:main-${SHA8}-arm64"
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            docker buildx imagetools create \
+              -t "${IMAGE}:main-${SHA8}" \
+              -t "${IMAGE}:latest" \
+              "${IMAGE}:main-${SHA8}-amd64" \
+              "${IMAGE}:main-${SHA8}-arm64"
+          else
+            docker buildx imagetools create \
+              -t "${IMAGE}:staging" \
+              "${IMAGE}:staging-${SHA8}-amd64" \
+              "${IMAGE}:staging-${SHA8}-arm64"
+          fi
