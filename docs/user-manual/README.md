@@ -24,7 +24,7 @@ Terminal direct-connect and port forwarding are currently alpha features under a
 
 ## 更多资料 / More
 
-- 仓库根目录的 [README.md](../../README.md)：项目介绍与开发环境说明
+- 仓库根目录的 [README.zh-CN.md](../../README.zh-CN.md)（[English](../../README.md)）：项目介绍与开发环境说明
 - [CHANGELOG.md](../../CHANGELOG.md)：版本更新日志
 
 ## 赞助支持 / Sponsor This Project

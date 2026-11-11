@@ -91,4 +91,4 @@ approval_timeout_secs = 600   # 审批等待秒数，超时自动拒绝
 ## 下一步
 
 - [远程目录](remote-directories.md)：把远程主机项目接入工作台
-- 仓库根目录 [README.md](../../../README.md)：整体架构与开发指南
+- 仓库根目录 [README.zh-CN.md](../../../README.zh-CN.md)：整体架构与开发指南
