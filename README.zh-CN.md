@@ -191,7 +191,7 @@ enabled = true
 
 ## 许可证
 
-Copyright (c) 2026 杭州玄米科技有限公司 (Hangzhou MilletCode Technology Co., Ltd.)
+Copyright © 杭州玄米科技有限公司 (Hangzhou MilletCode Technology Co., Ltd.)
 
 本项目基于 **GNU Affero General Public License v3.0 only**（[AGPL-3.0-only](./LICENSE)）授权。
 

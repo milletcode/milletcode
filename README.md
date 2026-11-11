@@ -191,7 +191,7 @@ Other methods (WeChat / Alipay and the latest codes) are on our website: [millet
 
 ## License
 
-Copyright (c) 2026 杭州玄米科技有限公司 (Hangzhou MilletCode Technology Co., Ltd.)
+Copyright © 杭州玄米科技有限公司 (Hangzhou MilletCode Technology Co., Ltd.)
 
 This project is licensed under the **GNU Affero General Public License v3.0 only** ([AGPL-3.0-only](./LICENSE)).
 
