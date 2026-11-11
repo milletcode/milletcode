@@ -46,7 +46,14 @@ jobs:
           auth="Authorization: Bearer ${GITHUB_TOKEN}"
           job_id=$(curl -sf -H "$auth" "$api/runs/${GITHUB_RUN_ID}/jobs" \
             | python3 -c 'import json,sys; print([j["id"] for j in json.load(sys.stdin)["jobs"] if j["name"].startswith("test-backend")][0])')
-          curl -sfL -H "$auth" "$api/jobs/${job_id}/logs" -o /tmp/job.log
+          # 日志端点 302 到带签名的 blob URL，带 Authorization 头跟随重定向会被拒：
+          # 先取 redirect_url，再裸请求
+          log_url=$(curl -sf -H "$auth" -o /dev/null -w '%{redirect_url}' "$api/jobs/${job_id}/logs")
+          if [ -n "$log_url" ]; then
+            curl -sfL "$log_url" -o /tmp/job.log
+          else
+            curl -sf -H "$auth" "$api/jobs/${job_id}/logs" -o /tmp/job.log
+          fi
           grep -E '^(error|failures:|---- |test result: FAILED|thread .* panicked)' -A 2 /tmp/job.log \
             | head -24 | sed 's/::/ | /g' \
             | while IFS= read -r line; do
