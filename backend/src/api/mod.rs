@@ -1,6 +1,7 @@
 use axum::{
+    response::IntoResponse,
     routing::{any, delete, get, post, put},
-    middleware, Router,
+    middleware, Json, Router,
 };
 use std::sync::Arc;
 
@@ -198,9 +199,20 @@ fn sanitize_json_strings(value: &mut serde_json::Value) {
 }
 
 /// Handler for serving static files from embedded assets
-async fn static_handler(uri: axum::http::Uri) -> impl axum::response::IntoResponse {
+async fn static_handler(uri: axum::http::Uri) -> axum::response::Response {
     let path = uri.path().trim_start_matches('/').to_string();
-    crate::static_files::serve_static(path).await
+
+    // API 命名空间永不走 SPA fallback：未匹配真实路由的 /api/* 一律 404，
+    // 兜住任何"被误判为公开"的变体路径，前端入口页不会从这里泄露。
+    if path == "api" || path.starts_with("api/") {
+        return (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "not found" })),
+        )
+            .into_response();
+    }
+
+    crate::static_files::serve_static(path).await.into_response()
 }
 
 #[cfg(test)]
@@ -266,5 +278,50 @@ mod sanitize_middleware_tests {
         let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         // 成功响应不重写——agent 输出里的 ssh 用语不受影响
         assert_eq!(v["text"], "ssh port 22");
+    }
+}
+
+#[cfg(test)]
+mod fallback_tests {
+    use axum::http::{Request, StatusCode};
+    use axum::routing::get;
+    use axum::Router;
+    use tower::ServiceExt;
+
+    fn fallback_app() -> Router {
+        Router::new()
+            .route("/api/health", get(|| async { "ok" }))
+            .fallback(get(super::static_handler))
+    }
+
+    /// /api/* 未匹配真实路由必须 404，绝不落 SPA fallback 吐前端入口页
+    /// （渗透测试变体：/api/healthX、/api/health/foo、/api//health 等）。
+    #[tokio::test]
+    async fn api_namespace_never_serves_spa() {
+        for uri in ["/api/healthX", "/api/health/foo", "/api//health", "/api/nope", "/api"] {
+            let res = fallback_app()
+                .oneshot(Request::builder().uri(uri).body(axum::body::Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::NOT_FOUND, "must 404: {uri}");
+            let bytes = axum::body::to_bytes(res.into_body(), 64 * 1024).await.unwrap();
+            let text = String::from_utf8_lossy(&bytes);
+            assert!(!text.contains("<script"), "no SPA html for {uri}");
+        }
+    }
+
+    /// 非 API 命名空间的 SPA fallback 行为保持不变（返回内嵌 index.html）。
+    #[tokio::test]
+    async fn non_api_fallback_still_serves_spa() {
+        let res = fallback_app()
+            .oneshot(Request::builder().uri("/sessions").body(axum::body::Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let is_html = res
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.starts_with("text/html"));
+        assert!(is_html, "SPA fallback must still serve html");
     }
 }

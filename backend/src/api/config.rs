@@ -464,6 +464,9 @@ async fn set_setting(
                     if let Err(e) = write_claude_settings(&state_clone, None, true).await {
                         tracing::warn!("Failed to sync local settings.json: {}", e);
                     }
+                    if let Err(e) = sync_codex_auth(&state_clone).await {
+                        tracing::warn!("Failed to sync codex auth.json: {}", e);
+                    }
 
                     // Sync to all remote SSH hosts
                     let remote_keywords = state_clone.project_manager.remote_keywords();
@@ -545,6 +548,9 @@ async fn set_active_role(
             if let Err(e) = write_claude_settings(&state, None, true).await {
                 tracing::warn!("Failed to update Claude settings: {}", e);
             }
+            if let Err(e) = sync_codex_auth(&state).await {
+                tracing::warn!("Failed to sync codex auth.json: {}", e);
+            }
             (StatusCode::OK, Json(serde_json::json!({ "status": "ok", "role": role }))).into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() }))).into_response(),
@@ -555,10 +561,215 @@ async fn set_active_role(
 async fn refresh_claude_settings(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    match write_claude_settings(&state, None, true).await {
-        Ok(msg) => (StatusCode::OK, Json(serde_json::json!({ "status": "ok", "message": msg }))).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))).into_response(),
+    let claude = write_claude_settings(&state, None, true).await;
+    let codex = sync_codex_auth(&state).await;
+    match (claude, codex) {
+        (Ok(c), Ok(x)) => (StatusCode::OK, Json(serde_json::json!({ "status": "ok", "message": format!("{c}；{x}") }))).into_response(),
+        (Err(e), _) | (_, Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))).into_response(),
     }
+}
+
+/// 纯函数核心：把新 OPENAI_API_KEY 合并进 auth.json 内容。
+/// 保留其他字段（如 ChatGPT 登录 tokens）；返回 (新内容, 是否有变化)。
+fn merge_codex_auth(existing: Option<&str>, api_key: &str) -> Result<(String, bool), String> {
+    let mut auth: serde_json::Value = match existing {
+        Some(content) => serde_json::from_str(content)
+            .map_err(|e| format!("~/.codex/auth.json 解析失败: {e}"))?,
+        None => serde_json::json!({}),
+    };
+    if !auth.is_object() {
+        auth = serde_json::json!({});
+    }
+    let changed = auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()) != Some(api_key);
+    auth.as_object_mut()
+        .unwrap()
+        .insert("OPENAI_API_KEY".to_string(), serde_json::Value::String(api_key.to_string()));
+    let content = serde_json::to_string_pretty(&auth).map_err(|e| e.to_string())?;
+    Ok((content, changed))
+}
+
+/// 把默认模型写进 ~/.codex/config.toml 的 `model` 键（幂等，值相同不重写）。
+/// key 与 provider 不配对会 401，model 与 key 不配对会 403——GPT API 角色的
+/// model[0] 就是该 relay 的默认模型，同步它才能兜住首轮 turn/start（不带
+/// model 参数时 codex 回落 config.toml）。
+fn set_codex_config_model(content: &str, model: &str) -> Result<(String, bool), String> {
+    let mut cfg: toml::Value =
+        toml::from_str(content).map_err(|e| format!("~/.codex/config.toml 解析失败: {e}"))?;
+    if cfg.get("model").and_then(|v| v.as_str()) == Some(model) {
+        return Ok((content.to_string(), false));
+    }
+    if let toml::Value::Table(table) = &mut cfg {
+        table.insert("model".to_string(), toml::Value::String(model.to_string()));
+    }
+    let out = toml::to_string(&cfg).map_err(|e| format!("序列化 config.toml 失败: {e}"))?;
+    Ok((out, true))
+}
+
+/// 从 URL（可带 scheme/路径/端口）提取小写主机名。
+fn hostname_of(url: &str) -> Option<String> {
+    let no_scheme = match url.trim().split_once("://") {
+        Some((_, rest)) => rest,
+        None => url.trim(),
+    };
+    let host = no_scheme.split(['/', '?']).next()?.split(':').next()?;
+    let host = host.trim().to_lowercase();
+    if host.is_empty() { None } else { Some(host) }
+}
+
+/// 解析 ~/.codex/config.toml 的默认 provider 主机名（model_provider →
+/// model_providers.<name>.base_url）。没有自定义 provider = codex 用官方
+/// OpenAI 登录，auth.json 由宿主机自己管理，返回 None。
+fn codex_provider_hostname() -> Option<String> {
+    let path = dirs::home_dir()?.join(".codex").join("config.toml");
+    let content = std::fs::read_to_string(path).ok()?;
+    let cfg: toml::Value = toml::from_str(&content).ok()?;
+    let name = cfg.get("model_provider")?.as_str()?;
+    let base_url = cfg
+        .get("model_providers")?
+        .get(name)?
+        .get("base_url")?
+        .as_str()?;
+    hostname_of(base_url)
+}
+
+/// 在 primary/secondary 里选出 host 与 codex provider 匹配的角色：
+/// 两个都匹配时优先活动角色，都不匹配返回 None（不能把别家的 key
+/// 写进 codex 的 auth.json——key 与 provider 不配对是必 401）。
+fn pick_codex_role(
+    codex_host: Option<&str>,
+    active: &str,
+    primary_host: Option<&str>,
+    secondary_host: Option<&str>,
+) -> Option<String> {
+    let codex_host = codex_host?;
+    let matches = |host: Option<&str>| host.is_some_and(|h| hostname_of(h).as_deref() == Some(codex_host));
+    let (active_first, other) = if active == "secondary" {
+        ("secondary", "primary")
+    } else {
+        ("primary", "secondary")
+    };
+    let host_of = |role: &str| if role == "primary" { primary_host } else { secondary_host };
+    if matches(host_of(active_first)) {
+        Some(active_first.to_string())
+    } else if matches(host_of(other)) {
+        Some(other.to_string())
+    } else {
+        None
+    }
+}
+
+/// 把 GPT API key 同步进 ~/.codex/auth.json（codex 的凭证来源）。
+/// 按 host 匹配选角色：codex 的 provider 指向哪个 relay，就同步那个
+/// relay 对应角色的 key；GPT API 是平台统一的 key 管理入口——claude 落
+/// settings.json（活动角色），codex 落 auth.json（host 匹配的角色），
+/// 缺一边就会出现"刷新了设置但 codex 还在用旧 token"的 401。
+pub async fn sync_codex_auth(state: &AppState) -> Result<String, String> {
+    let instances = &state.config_manager.config().agent.instances;
+    let allow_overwrite = instances.get("codex").map(|a| a.allow_config_overwrite).unwrap_or(true);
+    if !allow_overwrite {
+        tracing::info!("codex agent has allow_config_overwrite=false, skipping auth.json update");
+        return Ok("codex 写保护已启用，忽略写入".to_string());
+    }
+
+    let role_config = |role: &str| -> Option<(String, Option<String>, Option<String>)> {
+        let v = state.settings_store.get(&format!("settings.gpt_api.{role}")).ok()??;
+        let cfg: serde_json::Value = serde_json::from_str(&v).ok()?;
+        let host = cfg.get("host").and_then(|h| h.as_str()).map(str::to_string);
+        let key = cfg.get("api_key").and_then(|k| k.as_str()).unwrap_or("").to_string();
+        let model = cfg
+            .get("model")
+            .and_then(|m| m.as_array())
+            .and_then(|list| list.first())
+            .and_then(|m| m.as_str())
+            .filter(|m| !m.is_empty())
+            .map(str::to_string);
+        Some((key, host, model))
+    };
+
+    let active = active_role(state);
+    let primary = role_config("primary");
+    let secondary = role_config("secondary");
+    if primary.is_none() && secondary.is_none() {
+        tracing::info!("GPT API not configured, skipping codex auth.json write");
+        return Ok("GPT API 未配置，跳过写入".to_string());
+    }
+
+    let codex_host = codex_provider_hostname();
+    let matched = pick_codex_role(
+        codex_host.as_deref(),
+        &active,
+        primary.as_ref().and_then(|(_, h, _)| h.as_deref()),
+        secondary.as_ref().and_then(|(_, h, _)| h.as_deref()),
+    );
+    let Some(role) = matched else {
+        let provider = codex_host.unwrap_or_default();
+        tracing::info!(
+            provider = %provider,
+            "no GPT API role host matches codex provider, skipping auth.json write"
+        );
+        return Ok(format!(
+            "GPT API 角色 host 与 codex provider（{}）不匹配，跳过写入",
+            if provider.is_empty() { "官方登录" } else { &provider }
+        ));
+    };
+
+    let (api_key, _, role_model) = if role == "primary" { primary } else { secondary }.unwrap();
+    if api_key.is_empty() && role_model.is_none() {
+        tracing::info!("GPT API {} has neither api_key nor model, skipping codex sync", role);
+        return Ok(format!("GPT API {} 未配置 api_key，跳过写入", role));
+    }
+
+    let codex_dir = dirs::home_dir()
+        .ok_or_else(|| "Cannot find home directory".to_string())?
+        .join(".codex");
+    std::fs::create_dir_all(&codex_dir).map_err(|e| format!("create ~/.codex failed: {e}"))?;
+
+    let mut messages: Vec<String> = Vec::new();
+
+    if !api_key.is_empty() {
+        let auth_path = codex_dir.join("auth.json");
+        let existing = std::fs::read_to_string(&auth_path).ok();
+        let (content, changed) = merge_codex_auth(existing.as_deref(), &api_key)?;
+        if changed {
+            std::fs::write(&auth_path, &content)
+                .map_err(|e| format!("write auth.json failed: {e}"))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(
+                    &auth_path,
+                    std::fs::Permissions::from_mode(0o600),
+                );
+            }
+            tracing::info!(role = %role, "Synced GPT API key into ~/.codex/auth.json");
+            messages.push(format!("已同步 GPT API（{role}）key 到 ~/.codex/auth.json"));
+        }
+    }
+
+    // 默认模型与 key 同源同 relay：首轮 turn/start 不带 model 参数时 codex
+    // 回落 config.toml，不同步就会出现"key 刷新了但默认模型无权限"的 403。
+    if let Some(model) = role_model {
+        let config_path = codex_dir.join("config.toml");
+        let existing = std::fs::read_to_string(&config_path)
+            .map_err(|e| format!("read config.toml failed: {e}"))?;
+        match set_codex_config_model(&existing, &model) {
+            Ok((content, true)) => {
+                std::fs::write(&config_path, &content)
+                    .map_err(|e| format!("write config.toml failed: {e}"))?;
+                tracing::info!(role = %role, model = %model, "Synced default model into ~/.codex/config.toml");
+                messages.push(format!("已同步默认模型 {model} 到 ~/.codex/config.toml"));
+            }
+            Ok((_, false)) => {}
+            Err(e) => {
+                tracing::warn!("codex config.toml model sync failed: {}", e);
+            }
+        }
+    }
+
+    if messages.is_empty() {
+        return Ok("codex auth.json 已是最新".to_string());
+    }
+    Ok(messages.join("；"))
 }
 
 /// Write ~/.claude/settings.json based on active GPT API config
@@ -1049,13 +1260,15 @@ async fn switch_model(
         }
     } else {
         // For local projects, update local settings.json
-        match write_claude_settings(&state, Some(model), true).await {
-            Ok(msg) => (StatusCode::OK, Json(serde_json::json!({
+        let claude = write_claude_settings(&state, Some(model), true).await;
+        let codex = sync_codex_auth(&state).await;
+        match (claude, codex) {
+            (Ok(msg), Ok(x)) => (StatusCode::OK, Json(serde_json::json!({
                 "status": "ok",
-                "message": msg,
+                "message": format!("{msg}；{x}"),
                 "model": model
             }))).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+            (Err(e), _) | (_, Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
                 "error": e
             }))).into_response(),
         }
@@ -1226,9 +1439,108 @@ pub(crate) async fn nl_to_command(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_protected_ask_rules, protected_ask_rules, prune_legacy_k8s_hook,
-        select_model_by_priority,
+        apply_protected_ask_rules, hostname_of, merge_codex_auth, pick_codex_role,
+        protected_ask_rules, prune_legacy_k8s_hook, select_model_by_priority,
+        set_codex_config_model,
     };
+
+    #[test]
+    fn codex_auth_merge_replaces_key_preserves_other_fields() {
+        let existing = r#"{"OPENAI_API_KEY":"sk-old","tokens":{"id_token":"t1"}}"#;
+        let (content, changed) = merge_codex_auth(Some(existing), "sk-new").unwrap();
+        assert!(changed);
+        let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(v["OPENAI_API_KEY"], "sk-new");
+        // ChatGPT 登录 tokens 等其他字段必须保留
+        assert_eq!(v["tokens"]["id_token"], "t1");
+    }
+
+    #[test]
+    fn codex_auth_merge_fresh_and_noop() {
+        // 文件不存在 → 全新对象
+        let (content, changed) = merge_codex_auth(None, "sk-fresh").unwrap();
+        assert!(changed);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&content).unwrap()["OPENAI_API_KEY"],
+            "sk-fresh"
+        );
+        // key 未变 → changed=false（调用方据此跳过写盘）
+        let (_, changed) = merge_codex_auth(Some(r#"{"OPENAI_API_KEY":"sk-fresh"}"#), "sk-fresh").unwrap();
+        assert!(!changed);
+    }
+
+    #[test]
+    fn codex_auth_merge_corrupt_or_non_object_resets() {
+        // 解析失败必须报错而不是静默覆盖
+        assert!(merge_codex_auth(Some("{not json"), "sk-x").is_err());
+        // 顶层非对象（数组）→ 重置为对象再写入
+        let (content, changed) = merge_codex_auth(Some("[1,2]"), "sk-x").unwrap();
+        assert!(changed);
+        let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(v["OPENAI_API_KEY"], "sk-x");
+    }
+
+    #[test]
+    fn codex_role_picked_by_provider_host() {
+        let primary = Some("https://gpt.milletcode.cn");
+        let secondary = Some("https://open.bigmodel.cn/api/anthropic");
+        // 活动=secondary（bigmodel），但 codex provider 指向 relay → 选 primary
+        assert_eq!(
+            pick_codex_role(Some("gpt.milletcode.cn"), "secondary", primary, secondary),
+            Some("primary".to_string())
+        );
+        // 两个角色都匹配同一 host → 优先活动角色
+        assert_eq!(
+            pick_codex_role(Some("gpt.milletcode.cn"), "secondary", primary, Some("https://gpt.milletcode.cn/v1")),
+            Some("secondary".to_string())
+        );
+        // 无一匹配 → None（绝不把别家 key 写进 auth.json）
+        assert_eq!(pick_codex_role(Some("api.openai.com"), "secondary", primary, secondary), None);
+        // codex 无自定义 provider（官方登录）→ 不同步
+        assert_eq!(pick_codex_role(None, "primary", primary, secondary), None);
+        // 角色未配置 host → 视为不匹配
+        assert_eq!(pick_codex_role(Some("gpt.milletcode.cn"), "primary", None, secondary), None);
+    }
+
+    #[test]
+    fn hostname_extraction_strips_scheme_path_port() {
+        assert_eq!(hostname_of("https://gpt.milletcode.cn/v1").as_deref(), Some("gpt.milletcode.cn"));
+        assert_eq!(hostname_of("http://Host.Example:8443/api").as_deref(), Some("host.example"));
+        assert_eq!(hostname_of("gpt.milletcode.cn").as_deref(), Some("gpt.milletcode.cn"));
+        assert_eq!(hostname_of("https://"), None);
+        assert_eq!(hostname_of(""), None);
+    }
+
+    #[test]
+    fn codex_config_model_updates_only_when_different() {
+        let base = r#"model = "gpt-5.5"
+model_provider = "MilletCode"
+
+[model_providers.MilletCode]
+base_url = "https://gpt.milletcode.cn/v1"
+"#;
+        // 模型不同 → 重写且保留其他键
+        let (out, changed) = set_codex_config_model(base, "glm-5.3").unwrap();
+        assert!(changed);
+        let cfg: toml::Value = toml::from_str(&out).unwrap();
+        assert_eq!(cfg["model"].as_str(), Some("glm-5.3"));
+        assert_eq!(cfg["model_provider"].as_str(), Some("MilletCode"));
+        assert_eq!(
+            cfg["model_providers"]["MilletCode"]["base_url"].as_str(),
+            Some("https://gpt.milletcode.cn/v1")
+        );
+        // 模型相同 → 不重写（保留原文，避免无谓的注释丢失）
+        let (out2, changed2) = set_codex_config_model(&out, "glm-5.3").unwrap();
+        assert!(!changed2);
+        assert_eq!(out2, out);
+        // 没有 model 键 → 新增
+        let (out3, changed3) =
+            set_codex_config_model("model_provider = \"x\"\n", "glm-5.3").unwrap();
+        assert!(changed3);
+        assert_eq!(toml::from_str::<toml::Value>(&out3).unwrap()["model"].as_str(), Some("glm-5.3"));
+        // 解析失败 → 报错不覆盖
+        assert!(set_codex_config_model("not [valid toml", "glm-5.3").is_err());
+    }
 
     // The production 保护指令 list, verbatim from ~/.milletcode/config.toml.
     #[test]

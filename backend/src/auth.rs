@@ -349,12 +349,19 @@ impl LoginThrottle {
     }
 }
 
-/// 提取登录限速 key。只有边缘代理（vite，带 x-millet-edge 标记头）转发的
-/// 请求才信任 X-Forwarded-For（取末位——逐跳追加，末位是基础设施看到的对端）；
-/// 其余（直连 :3030）用 TCP 对端地址——XFF 可被客户端任意伪造，直接采信
-/// 等于限速形同虚设。
-pub fn login_throttle_key(headers: &axum::http::HeaderMap, remote: Option<std::net::SocketAddr>) -> String {
-    if headers.contains_key("x-millet-edge") {
+/// 提取登录限速 key。只有当 TCP 对端命中可信代理网段（trusted_proxies，
+/// 默认 loopback + RFC1918）**且**带 x-millet-edge 标记头时，才采信
+/// X-Forwarded-For 末位——逐跳追加语义下末位是可信代理看到的真实对端，
+/// 客户端伪造的值只会出现在链首。其余一切情况（含公网直连伪造 edge 头）
+/// 用 TCP 对端地址——它不可伪造。
+pub fn login_throttle_key(
+    headers: &axum::http::HeaderMap,
+    remote: Option<std::net::SocketAddr>,
+    trusted: &[IpNet],
+) -> String {
+    let peer = remote.map(|a| normalize_ip(a.ip()));
+    let from_trusted_proxy = peer.is_some_and(|ip| trusted.iter().any(|net| net.contains(ip)));
+    if from_trusted_proxy && headers.contains_key("x-millet-edge") {
         let xff = headers
             .get("x-forwarded-for")
             .and_then(|v| v.to_str().ok())
@@ -365,15 +372,95 @@ pub fn login_throttle_key(headers: &axum::http::HeaderMap, remote: Option<std::n
             return ip.to_string();
         }
     }
-    remote
-        .map(|a| a.ip().to_string())
+    peer.map(|ip| ip.to_string())
         .unwrap_or_else(|| "local".to_string())
 }
 
-/// Paths that don't require authentication
+/// 默认可信代理网段：v4/v6 loopback + RFC1918 内网 + IPv6 ULA。
+/// 自托管部署的边缘代理（nginx/Traefik/vite）与本服务同机或同 docker
+/// 网络，对端必然落在这些网段里；显式配置 trusted_proxies 时整体替换。
+pub const DEFAULT_TRUSTED_PROXIES: &[&str] = &[
+    "127.0.0.0/8",
+    "::1/128",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "fc00::/7",
+];
+
+/// 解析配置的可信代理网段；未配置时用默认集合。
+pub fn trusted_proxy_nets(configured: &[String]) -> Vec<IpNet> {
+    let entries: Vec<&str> = if configured.is_empty() {
+        DEFAULT_TRUSTED_PROXIES.to_vec()
+    } else {
+        configured.iter().map(String::as_str).collect()
+    };
+    entries.iter().filter_map(|s| IpNet::parse(s)).collect()
+}
+
+/// v4-mapped v6（::ffff:1.2.3.4，dual-stack listen 下 accept 出的形态）
+/// 归一化为 v4 再做网段匹配，否则 127.0.0.0/8 之类永远匹配不上。
+fn normalize_ip(ip: std::net::IpAddr) -> std::net::IpAddr {
+    match ip {
+        std::net::IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => std::net::IpAddr::V4(v4),
+            None => ip,
+        },
+        _ => ip,
+    }
+}
+
+/// 最小 IP 网段（CIDR）：v4/v6 各一对 (网络号, 掩码)，匹配 = 掩码按位与相等。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum IpNet {
+    V4 { net: u32, mask: u32 },
+    V6 { net: u128, mask: u128 },
+}
+
+impl IpNet {
+    /// "127.0.0.0/8"、"::1/128"、"10.0.0.5"（无前缀 = /32 或 /128）。
+    pub fn parse(s: &str) -> Option<Self> {
+        let (addr, prefix) = match s.trim().rsplit_once('/') {
+            Some((a, p)) => (a, Some(p.parse::<u8>().ok()?)),
+            None => (s.trim(), None),
+        };
+        match addr.parse::<std::net::IpAddr>().ok()? {
+            std::net::IpAddr::V4(v) => {
+                let bits = prefix.unwrap_or(32);
+                if bits > 32 {
+                    return None;
+                }
+                let mask = if bits == 0 { 0 } else { !0u32 << (32 - bits) };
+                Some(IpNet::V4 { net: u32::from(v) & mask, mask })
+            }
+            std::net::IpAddr::V6(v) => {
+                let bits = prefix.unwrap_or(128);
+                if bits > 128 {
+                    return None;
+                }
+                let mask = if bits == 0 { 0 } else { !0u128 << (128 - bits) };
+                Some(IpNet::V6 { net: u128::from_be_bytes(v.octets()) & mask, mask })
+            }
+        }
+    }
+
+    pub fn contains(&self, ip: std::net::IpAddr) -> bool {
+        let ip = normalize_ip(ip);
+        match (self, ip) {
+            (IpNet::V4 { net, mask }, std::net::IpAddr::V4(v)) => (u32::from(v) & mask) == *net,
+            (IpNet::V6 { net, mask }, std::net::IpAddr::V6(v)) => {
+                (u128::from_be_bytes(v.octets()) & mask) == *net
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Paths that don't require authentication. 精确匹配——前缀匹配会让
+/// `/api/healthX`、`/changelogX` 这类变体免认证直达 SPA fallback（渗透
+/// 测试发现的泄露出口），非规范形态一律按需认证。
 const PUBLIC_PATHS: &[&str] = &[
     "/api/health",
-    "/oauth2/",
     "/api/settings/auth",
     // Login page posts here before any session exists.
     "/api/auth/login",
@@ -387,6 +474,19 @@ const PUBLIC_PATHS: &[&str] = &[
     // SPA 在匿名下加载不出来，所以一律回自包含页面，见 static_files::changelog_page）。
     "/changelog",
 ];
+
+/// 唯一保留子树语义的公开前缀：oauth2-proxy 的对外端点群
+/// （/oauth2/sign_in、/oauth2/callback 等），由 proxy 自身做认证。
+const PUBLIC_PATH_PREFIXES: &[&str] = &["/oauth2/"];
+
+/// 按原始 path 判定公开路径：精确集合 + `/oauth2/` 子树。
+/// 不做 percent-decode / dot-segment 归一化——归一化后再匹配会把
+/// `/api/health/%2e%2e/`、`/api%2Fhealth` 之类变体折叠成公开路径，
+/// 而路由器按原始形态分发，两者一旦不一致就重新打开泄露口。
+/// 非字面形态（尾斜杠、编码、大小写）全部落到"需认证"这一安全默认侧。
+fn is_public_path(path: &str) -> bool {
+    PUBLIC_PATHS.contains(&path) || PUBLIC_PATH_PREFIXES.iter().any(|p| path.starts_with(p))
+}
 
 /// plain 模式下可匿名的路径：`/login` 页面 + 验证码接口（登录页自举所需）。
 /// 由后端内嵌的自包含登录页服务（static_files::login_page），不依赖 SPA
@@ -448,7 +548,7 @@ pub async fn auth_middleware(
     let auth = &state.config_manager.config().auth;
 
     // Check if path is public
-    if PUBLIC_PATHS.iter().any(|p| path.starts_with(p)) {
+    if is_public_path(&path) {
         return next.run(req).await;
     }
 
@@ -885,6 +985,61 @@ mod tests {
         assert!(!is_plain_public_path("/api/sessions"));
     }
 
+    /// 渗透测试（ARTEX）PoC 变体全集：前缀撞车、尾斜杠、dot-segment、
+    /// percent-encode、大小写——全部不得命中公开路径（按需认证）。
+    #[test]
+    fn public_path_prefix_variants_are_not_public() {
+        for p in [
+            "/api/healthX",
+            "/api/health/",
+            "/api/health/foo",
+            "/api/health/%2e%2e/",
+            "/api/health/../",
+            "/api/health%2e",
+            "/api//health",
+            "/API/HEALTH",
+            "/api/logoutX",
+            "/api/auth/loginX",
+            "/api/settings/authX",
+            "/api/changelogX",
+            "/changelogX",
+            "/changelog/foo",
+            "/oauth2X",
+        ] {
+            assert!(!is_public_path(p), "must not be public: {p}");
+        }
+    }
+
+    #[test]
+    fn public_path_exact_and_oauth2_subtree() {
+        for p in [
+            "/api/health",
+            "/api/auth/login",
+            "/api/logout",
+            "/api/settings/auth",
+            "/api/changelog",
+            "/changelog",
+            "/oauth2/",
+            "/oauth2/sign_in",
+            "/oauth2/callback",
+        ] {
+            assert!(is_public_path(p), "must be public: {p}");
+        }
+        // 认证后才可见的路径不在公开集合
+        for p in [
+            "/",
+            "/api/sessions",
+            "/api/settings",
+            "/assets/index-abc.js",
+            "/version.json",
+            "/api/captcha",
+            "/login",
+            "/oauth2",
+        ] {
+            assert!(!is_public_path(p), "must not be public: {p}");
+        }
+    }
+
     #[test]
     fn time_token_current_slot_accepted() {
         let secret = "test-secret";
@@ -986,19 +1141,76 @@ mod tests {
     }
 
     #[test]
-    fn throttle_key_trusts_edge_header_only() {
+    fn throttle_key_requires_trusted_proxy_peer() {
         let mut headers = axum::http::HeaderMap::new();
-        let remote: std::net::SocketAddr = "192.168.1.7:5555".parse().unwrap();
-        // 直连（无边缘标记）：用 TCP 对端，忽略客户端可伪造的 XFF
+        let trusted = trusted_proxy_nets(&[]);
+        // 可信代理（RFC1918）直连、无边缘标记：用 TCP 对端，忽略 XFF
+        let lan: std::net::SocketAddr = "192.168.1.7:5555".parse().unwrap();
         headers.insert("x-forwarded-for", "8.8.8.8".parse().unwrap());
-        assert_eq!(login_throttle_key(&headers, Some(remote)), "192.168.1.7");
-        assert_eq!(login_throttle_key(&headers, None), "local");
-        // 边缘代理转发：取 XFF 末位
+        assert_eq!(login_throttle_key(&headers, Some(lan), &trusted), "192.168.1.7");
+        assert_eq!(login_throttle_key(&headers, None, &trusted), "local");
+        // 可信代理转发 + 边缘标记：取 XFF 末位（逐跳追加，末位是真实对端）
         headers.insert("x-millet-edge", "vite".parse().unwrap());
         headers.insert("x-forwarded-for", "8.8.8.8, 1.2.3.4".parse().unwrap());
-        assert_eq!(login_throttle_key(&headers, Some(remote)), "1.2.3.4");
-        // 边缘标记在但 XFF 缺失/空：回退 TCP 对端
+        assert_eq!(login_throttle_key(&headers, Some(lan), &trusted), "1.2.3.4");
+        // 边缘标记在但 XFF 空：回退 TCP 对端
         headers.insert("x-forwarded-for", "  ".parse().unwrap());
-        assert_eq!(login_throttle_key(&headers, Some(remote)), "192.168.1.7");
+        assert_eq!(login_throttle_key(&headers, Some(lan), &trusted), "192.168.1.7");
+    }
+
+    /// 渗透实测的绕过手法：公网直连 + 伪造 x-millet-edge + 伪造 XFF。
+    /// TCP 对端不在可信网段，伪造头必须全部失效，key = 真实对端地址。
+    #[test]
+    fn throttle_key_ignores_forged_edge_from_untrusted_peer() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-millet-edge", "1".parse().unwrap());
+        headers.insert("x-forwarded-for", "203.0.113.163".parse().unwrap());
+        let attacker: std::net::SocketAddr = "203.0.113.9:5555".parse().unwrap();
+        let trusted = trusted_proxy_nets(&[]);
+        assert_eq!(
+            login_throttle_key(&headers, Some(attacker), &trusted),
+            "203.0.113.9"
+        );
+    }
+
+    /// 显式配置 trusted_proxies 时整体替换默认集合（loopback 不再特殊）。
+    #[test]
+    fn throttle_key_custom_proxies_replace_defaults() {
+        let custom = vec!["203.0.113.0/24".to_string()];
+        let trusted = trusted_proxy_nets(&custom);
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-millet-edge", "1".parse().unwrap());
+        headers.insert("x-forwarded-for", "9.9.9.9".parse().unwrap());
+        let loopback: std::net::SocketAddr = "127.0.0.1:5555".parse().unwrap();
+        assert_eq!(login_throttle_key(&headers, Some(loopback), &trusted), "127.0.0.1");
+        let inside: std::net::SocketAddr = "203.0.113.5:5555".parse().unwrap();
+        assert_eq!(login_throttle_key(&headers, Some(inside), &trusted), "9.9.9.9");
+    }
+
+    #[test]
+    fn ip_net_parse_and_contains() {
+        let loopback4 = IpNet::parse("127.0.0.0/8").unwrap();
+        assert!(loopback4.contains("127.0.0.1".parse().unwrap()));
+        assert!(!loopback4.contains("128.0.0.1".parse().unwrap()));
+        // 裸 IP = /32
+        let host = IpNet::parse("10.0.0.5").unwrap();
+        assert!(host.contains("10.0.0.5".parse().unwrap()));
+        assert!(!host.contains("10.0.0.6".parse().unwrap()));
+        // /0 全量匹配
+        assert!(IpNet::parse("0.0.0.0/0").unwrap().contains("8.8.8.8".parse().unwrap()));
+        // v6 loopback 与 ULA
+        let v6lo = IpNet::parse("::1/128").unwrap();
+        assert!(v6lo.contains("::1".parse().unwrap()));
+        assert!(!v6lo.contains("::2".parse().unwrap()));
+        assert!(IpNet::parse("fd00::/8").unwrap().contains("fd12:3456::1".parse().unwrap()));
+        // v4-mapped v6 归一化后按 v4 匹配
+        let mapped: std::net::IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+        assert!(loopback4.contains(mapped));
+        // v4 与 v6 网段互不匹配
+        assert!(!loopback4.contains("::1".parse().unwrap()));
+        // 非法输入
+        for bad in ["10.0.0.0/33", "::1/129", "not-an-ip", "10.0.0.1/abc", ""] {
+            assert!(IpNet::parse(bad).is_none(), "must reject {bad:?}");
+        }
     }
 }

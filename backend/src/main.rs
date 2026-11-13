@@ -21,6 +21,7 @@ use config::ConfigManager;
 use events::EventBus;
 use agents::{AgentRegistry, SessionManager};
 use agents::ClaudeAdapter;
+use agents::CodexAdapter;
 use agents::DeepSeekAdapter;
 use agents::SmartcodeAdapter;
 use projects::manager::ProjectManager;
@@ -139,9 +140,11 @@ async fn main() -> anyhow::Result<()> {
     let claude_adapter = std::sync::Arc::new(ClaudeAdapter::new(event_bus.clone(), config_manager.clone()));
     let deepseek_adapter = std::sync::Arc::new(DeepSeekAdapter::new(event_bus.clone()));
     let smartcode_adapter = std::sync::Arc::new(SmartcodeAdapter::new(event_bus.clone(), config_manager.clone(), settings_store.clone()));
+    let codex_adapter = std::sync::Arc::new(CodexAdapter::new(event_bus.clone(), config_manager.clone()));
     registry.register(claude_adapter);
     registry.register(deepseek_adapter);
     registry.register(smartcode_adapter);
+    registry.register(codex_adapter);
 
     let project_manager = std::sync::Arc::new(ProjectManager::new(config_manager.clone()));
     // Internal skills-installer project (refresh() re-registers it after every scan)
@@ -293,6 +296,9 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Syncing Claude settings.json...");
     if let Err(e) = api::config::write_claude_settings(&state, None, false).await {
         tracing::warn!("Local Claude settings initialization failed: {}", e);
+    }
+    if let Err(e) = api::config::sync_codex_auth(&state).await {
+        tracing::warn!("codex auth.json sync failed: {}", e);
     }
 
     // Sync to all remote SSH hosts (container restarts wipe ~/.claude).

@@ -555,6 +555,221 @@ fn parse_assistant_content(value: &serde_json::Value, timestamp: u64) -> Option<
     }
 }
 
+/// Read and parse a codex session rollout JSONL (absolute path — the same
+/// handle the adapter reports via session_ref / the claude_session_id slot).
+pub fn read_codex_session_history(
+    session_path: &str,
+    offset: usize,
+    limit: usize,
+) -> Result<HistoryResponse> {
+    let path = PathBuf::from(session_path);
+    if !path.exists() {
+        return Ok(HistoryResponse {
+            messages: Vec::new(),
+            has_more: false,
+            model: None,
+        });
+    }
+    let content = fs::read_to_string(&path)?;
+    parse_codex_history(&content, offset, limit)
+}
+
+/// Parse codex's rollout JSONL (shared by local and remote/SFTP reads).
+///
+/// Line shapes (codex-cli rollout writer):
+/// - `{"type":"session_meta",...}` / `{"type":"event_msg",...}` — skipped
+/// - `{"type":"turn_context","payload":{...,"model":"gpt-5.5"}}` — latest model
+/// - `{"type":"response_item","payload":{...}}` — the conversation itself:
+///   message(user/assistant/developer) / reasoning / function_call(_output) /
+///   custom_tool_call(_output) / web_search_call
+///
+/// Synthetic user turns (environment context, AGENTS.md injection) start with
+/// `<` or `# AGENTS.md` and are skipped, same as the live adapter's view.
+pub fn parse_codex_history(content: &str, offset: usize, limit: usize) -> Result<HistoryResponse> {
+    let mut messages: Vec<(u64, HistoryMessage)> = Vec::new();
+    let mut current_model: Option<String> = None;
+
+    for (idx, line) in content.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        match value.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+            "turn_context" => {
+                if let Some(m) = value.pointer("/payload/model").and_then(|m| m.as_str()) {
+                    if !m.is_empty() {
+                        current_model = Some(m.to_string());
+                    }
+                }
+            }
+            "response_item" => {
+                let Some(payload) = value.get("payload") else {
+                    continue;
+                };
+                let timestamp = (idx as u64).wrapping_mul(1000);
+                let uuid = format!("codex-{}", idx);
+                if let Some(msg) = parse_codex_response_item(payload, timestamp, &uuid) {
+                    if !msg.content.is_empty() {
+                        messages.push((timestamp, msg));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let total = messages.len();
+    messages.reverse();
+    let start = offset;
+    let end = (start + limit).min(total);
+    let has_more = end < total;
+
+    let mut page: Vec<HistoryMessage> = if start < total {
+        messages[start..end].iter().map(|(_, m)| m.clone()).collect()
+    } else {
+        Vec::new()
+    };
+    page.reverse();
+
+    Ok(HistoryResponse {
+        messages: page,
+        has_more,
+        model: current_model,
+    })
+}
+
+/// One response_item payload → history message (None = skip).
+fn parse_codex_response_item(
+    payload: &serde_json::Value,
+    timestamp: u64,
+    uuid: &str,
+) -> Option<HistoryMessage> {
+    let pt = payload.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    match pt {
+        "message" => {
+            let role = payload.get("role").and_then(|r| r.as_str()).unwrap_or("");
+            let texts: Vec<String> = payload
+                .get("content")
+                .and_then(|c| c.as_array())
+                .map(|blocks| {
+                    blocks
+                        .iter()
+                        .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let text = texts.join("\n");
+            match role {
+                "user" => {
+                    // 合成轮次：环境上下文 / AGENTS.md 注入，不入历史
+                    let trimmed = text.trim_start();
+                    if trimmed.starts_with('<') || trimmed.starts_with("# AGENTS.md") {
+                        return None;
+                    }
+                    Some(HistoryMessage {
+                        role: "user".to_string(),
+                        msg_type: "user".to_string(),
+                        content: text,
+                        timestamp,
+                        user_type: None,
+                        uuid: Some(uuid.to_string()),
+                        parent_uuid: None,
+                    })
+                }
+                "assistant" => Some(HistoryMessage {
+                    role: "assistant".to_string(),
+                    msg_type: "assistant".to_string(),
+                    content: text,
+                    timestamp,
+                    user_type: None,
+                    uuid: Some(uuid.to_string()),
+                    parent_uuid: None,
+                }),
+                _ => None, // developer 及未知角色
+            }
+        }
+        "reasoning" => {
+            let summary = codex_reasoning_summary_text(payload);
+            if summary.is_empty() {
+                return None;
+            }
+            Some(HistoryMessage {
+                role: "assistant".to_string(),
+                msg_type: "assistant".to_string(),
+                content: format!("[thinking]{}[/thinking]", summary),
+                timestamp,
+                user_type: None,
+                uuid: Some(uuid.to_string()),
+                parent_uuid: None,
+            })
+        }
+        "function_call" | "custom_tool_call" => {
+            let name = payload.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            // function_call.arguments 是 JSON 字符串；custom_tool_call.input 是
+            // 补丁原文（非 JSON）—— 都直接作为工具输入展示
+            let input = payload
+                .get("arguments")
+                .or_else(|| payload.get("input"))
+                .and_then(|a| a.as_str())
+                .unwrap_or("");
+            let call_id = payload.get("call_id").and_then(|c| c.as_str()).unwrap_or("");
+            Some(HistoryMessage {
+                role: "assistant".to_string(),
+                msg_type: "assistant".to_string(),
+                content: format!("[tool_use id=\"{}\"]{} {}[/tool_use]", call_id, name, input),
+                timestamp,
+                user_type: None,
+                uuid: Some(uuid.to_string()),
+                parent_uuid: None,
+            })
+        }
+        "function_call_output" | "custom_tool_call_output" => {
+            let call_id = payload.get("call_id").and_then(|c| c.as_str()).unwrap_or("");
+            let output = payload
+                .get("output")
+                .and_then(|o| o.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some(HistoryMessage {
+                role: "assistant".to_string(),
+                msg_type: "assistant".to_string(),
+                content: format!(
+                    "[tool_result tool_use_id=\"{}\"]{}[/tool_result]",
+                    call_id, output
+                ),
+                timestamp,
+                user_type: None,
+                uuid: Some(uuid.to_string()),
+                parent_uuid: None,
+            })
+        }
+        _ => None, // web_search_call 等未知变体
+    }
+}
+
+/// reasoning payload 的 summary 文本：元素兼容裸字符串与
+/// `{"type":"summary_text","text":…}` 两种形态（与适配器同规则）。
+fn codex_reasoning_summary_text(payload: &serde_json::Value) -> String {
+    let Some(summary) = payload.get("summary").and_then(|s| s.as_array()) else {
+        return String::new();
+    };
+    summary
+        .iter()
+        .filter_map(|el| {
+            if let Some(s) = el.as_str() {
+                Some(s.to_string())
+            } else {
+                el.get("text").and_then(|t| t.as_str()).map(str::to_string)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -718,5 +933,116 @@ mod tests {
 
         let resp = parse_smartcode_history("garbage\n\n{}", 0, 10).expect("parsed");
         assert!(resp.messages.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod codex_tests {
+    use super::*;
+
+    /// 覆盖全部 response_item 形态 + turn_context model + 合成轮次过滤。
+    fn fixture() -> String {
+        [
+            // session_meta：跳过
+            r#"{"timestamp":"2026-06-25T16:26:45.000Z","type":"session_meta","payload":{"id":"t1","cwd":"/tmp"}}"#,
+            // developer 注入：跳过
+            r#"{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<permissions instructions>never</permissions instructions>"}]}}"#,
+            // 合成 user（环境上下文）：跳过
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>cwd=/tmp</environment_context>"}]}}"#,
+            // 合成 user（AGENTS.md）：跳过
+            r##"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /tmp\n<INSTRUCTIONS>...</INSTRUCTIONS>"}]}}"##,
+            // 真实 user
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"帮我看看目录"}]}}"#,
+            // reasoning（summary_text 形态）
+            r#"{"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"先想一下"}]}}"#,
+            // function_call
+            r#"{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"ls\"}","call_id":"call_1"}}"#,
+            // function_call_output
+            r#"{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"file-a\nfile-b"}}"#,
+            // custom_tool_call（input 为补丁原文）
+            r#"{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"*** Begin Patch\n*** Update File: a.rs","call_id":"call_2"}}"#,
+            r#"{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_2","output":"Done!"}}"#,
+            // assistant 回答
+            r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"目录里有 2 个文件"}]}}"#,
+            // event_msg：跳过
+            r#"{"type":"event_msg","payload":{"type":"task_complete"}}"#,
+            // turn_context（model 兜底）
+            r#"{"type":"turn_context","payload":{"cwd":"/tmp","model":"gpt-5.5"}}"#,
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn codex_history_parses_markers_and_skips_synthetic_turns() {
+        let resp = parse_codex_history(&fixture(), 0, 50).expect("parsed");
+        assert_eq!(resp.model.as_deref(), Some("gpt-5.5"));
+        let contents: Vec<&str> = resp.messages.iter().map(|m| m.content.as_str()).collect();
+
+        // 合成轮（developer / <environment_context> / # AGENTS.md）全部被过滤
+        assert!(!contents.iter().any(|c| c.contains("permissions instructions")));
+        assert!(!contents.iter().any(|c| c.contains("environment_context")));
+        assert!(!contents.iter().any(|c| c.contains("AGENTS.md instructions")));
+
+        // 顺序（旧→新）：user / thinking / tool_use / tool_result / custom_tool_use / custom_tool_result / assistant
+        assert_eq!(contents[0], "帮我看看目录");
+        assert_eq!(contents[1], "[thinking]先想一下[/thinking]");
+        assert!(contents[2].starts_with("[tool_use id=\"call_1\"]exec_command "));
+        assert!(contents[2].contains("{\"cmd\":\"ls\"}"));
+        assert_eq!(contents[3], "[tool_result tool_use_id=\"call_1\"]file-a\nfile-b[/tool_result]");
+        assert!(contents[4].starts_with("[tool_use id=\"call_2\"]apply_patch "));
+        assert!(contents[4].contains("*** Begin Patch"));
+        assert_eq!(contents[5], "[tool_result tool_use_id=\"call_2\"]Done![/tool_result]");
+        assert_eq!(contents[6], "目录里有 2 个文件");
+
+        // uuid / role 约定
+        assert_eq!(resp.messages[0].uuid.as_deref(), Some("codex-4"));
+        assert_eq!(resp.messages[0].role, "user");
+        assert_eq!(resp.messages[0].msg_type, "user");
+        for m in &resp.messages[1..] {
+            assert_eq!(m.role, "assistant");
+            assert_eq!(m.msg_type, "assistant");
+        }
+    }
+
+    #[test]
+    fn codex_history_paginates_newest_first() {
+        // 展示顺序始终为时间正序（旧→新）；offset 从最新端开窗
+        let resp = parse_codex_history(&fixture(), 0, 3).expect("parsed");
+        assert_eq!(resp.messages.len(), 3);
+        assert!(resp.has_more);
+        // 最新 3 条窗口（窗口内仍时间正序）：custom_tool_call / output / assistant 回答
+        assert_eq!(resp.messages[0].content, "[tool_use id=\"call_2\"]apply_patch *** Begin Patch\n*** Update File: a.rs[/tool_use]");
+        assert_eq!(resp.messages[1].content, "[tool_result tool_use_id=\"call_2\"]Done![/tool_result]");
+        assert_eq!(resp.messages[2].content, "目录里有 2 个文件");
+
+        let resp2 = parse_codex_history(&fixture(), 3, 10).expect("parsed");
+        assert_eq!(resp2.messages.len(), 4);
+        assert!(!resp2.has_more);
+        assert_eq!(resp2.messages.last().unwrap().content, "[tool_result tool_use_id=\"call_1\"]file-a\nfile-b[/tool_result]");
+    }
+
+    #[test]
+    fn codex_reasoning_accepts_plain_string_elements() {
+        let content = r#"{"type":"response_item","payload":{"type":"reasoning","summary":["第一段","第二段"]}}"#;
+        let resp = parse_codex_history(content, 0, 10).expect("parsed");
+        assert_eq!(resp.messages.len(), 1);
+        assert_eq!(resp.messages[0].content, "[thinking]第一段\n第二段[/thinking]");
+    }
+
+    #[test]
+    fn codex_history_empty_and_malformed_input_yield_empty() {
+        let resp = parse_codex_history("", 0, 10).expect("parsed");
+        assert!(resp.messages.is_empty());
+        assert!(resp.model.is_none());
+
+        let resp = parse_codex_history("garbage\n\n{\"type\":\"unknown_kind\"}", 0, 10).expect("parsed");
+        assert!(resp.messages.is_empty());
+    }
+
+    #[test]
+    fn codex_missing_rollout_file_yields_empty_response() {
+        let resp = read_codex_session_history("/nonexistent/rollout-x.jsonl", 0, 10).expect("ok");
+        assert!(resp.messages.is_empty());
+        assert!(!resp.has_more);
     }
 }

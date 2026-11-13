@@ -509,7 +509,7 @@ impl ClaudeAdapter {
 
 /// 非 0 退出码的用户可读原因。-1 = 信号终止无退出码（local wait 对无 code
 /// 进程的约定值）；130/137/143 是 shell 包装下常见的信号退出码。
-fn crash_reason(code: i32) -> String {
+pub(crate) fn crash_reason(code: i32) -> String {
     match code {
         -1 => format!("进程被信号终止（exit code: {code}，可能被系统强制结束，如内存不足）"),
         130 => format!("进程收到中断信号 SIGINT（exit code: {code}）"),

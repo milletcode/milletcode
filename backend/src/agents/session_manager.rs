@@ -8,7 +8,10 @@ use tracing;
 use super::{AgentAdapter, AgentRegistry, SessionHandle, PendingControlInfo, PendingKind};
 use super::parse_jsonl_history;
 use super::read_session_history as read_jsonl_history;
-use super::{parse_smartcode_history, read_smartcode_session_history};
+use super::{
+    parse_codex_history, parse_smartcode_history, read_codex_session_history,
+    read_smartcode_session_history,
+};
 use super::HistoryResponse;
 use crate::config::ConfigManager;
 use crate::runtime::{SftpClient, SshRuntime};
@@ -112,11 +115,14 @@ fn local_process_start_time(pid: u32) -> Option<String> {
     if stamp.is_empty() { None } else { Some(stamp) }
 }
 
-/// Whether `pid` still belongs to the claude process this record spawned.
+/// Whether `pid` still belongs to the agent process this record spawned.
 /// Start-time equality rules out PID reuse; legacy records without a captured
-/// stamp keep the historical cmdline-only best effort.
+/// stamp keep the historical cmdline-only best effort. Needle follows the
+/// record's adapter id (records predating multi-agent support default to
+/// claude).
 fn local_reclaim_target_matches(record: &SessionRecord, pid: u32) -> bool {
-    if !local_process_cmdline_contains(pid, "claude") {
+    let needle = if record.agent_id.is_empty() { "claude" } else { record.agent_id.as_str() };
+    if !local_process_cmdline_contains(pid, needle) {
         return false;
     }
     match record.pid_started_at.as_deref() {
@@ -132,7 +138,12 @@ async fn kill_local_pid_and_wait(pid: u32, timeout: std::time::Duration) -> bool
     if nix::sys::signal::kill(pid, None).is_err() {
         return true;
     }
-    let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGKILL);
+    // 进程组优先（本地 spawn 均为组长）：npm shim 类 CLI（codex 等）会派生
+    // 孙进程，只杀直接 pid 会留孤儿。组不存在时回退直接杀。
+    let group = nix::unistd::Pid::from_raw(-(pid.as_raw() as i32));
+    if nix::sys::signal::kill(group, nix::sys::signal::Signal::SIGKILL).is_err() {
+        let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGKILL);
+    }
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
         if nix::sys::signal::kill(pid, None).is_err() {
@@ -1358,6 +1369,26 @@ impl SessionManager {
             return Ok(resp);
         }
 
+        // codex 的 claude_session_id 槽位存的是 rollout JSONL 绝对路径
+        // （thread/started 自报），直接按路径读。
+        if agent_id == "codex" {
+            let rollout_path = record
+                .as_ref()
+                .and_then(|r| r.claude_session_id.clone())
+                .unwrap_or_default();
+            let mut resp = if is_remote {
+                self.read_remote_codex_history(project_path, &rollout_path, offset, limit)
+                    .await?
+            } else {
+                read_codex_session_history(&rollout_path, offset, limit)?
+            };
+            // record.model（config_changed 持久化）优先于 rollout turn_context
+            if let Some(m) = record.as_ref().and_then(|r| r.model.clone()) {
+                resp.model = Some(m);
+            }
+            return Ok(resp);
+        }
+
         if is_remote {
             let agent_id = record.as_ref().map(|r| r.agent_id.clone()).unwrap_or_default();
             return self
@@ -1432,6 +1463,33 @@ impl SessionManager {
             }
             Err(e) => {
                 tracing::debug!(path = %session_path, error = %e, "remote millet JSONL unreadable");
+                Ok(HistoryResponse { messages: Vec::new(), has_more: false, model: None })
+            }
+        }
+    }
+
+    /// Read a codex rollout JSONL from a remote host over SFTP. The stored
+    /// claude_session_id is the ABSOLUTE rollout path codex reported via
+    /// thread/started ($HOME-expanded on the remote), so a direct read suffices.
+    async fn read_remote_codex_history(
+        &self,
+        project_path: Option<&ProjectPath>,
+        session_path: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<HistoryResponse> {
+        let ctx = self.build_runtime_context(project_path, "codex");
+        let ssh_runtime = SshRuntime::connect(&ctx).await?;
+        let handle = ssh_runtime.shared_handle();
+        let mut sftp = SftpClient::new(&handle).await?;
+
+        match sftp.read_to_string(session_path).await {
+            Ok(content) => {
+                tracing::info!(path = %session_path, "read remote codex rollout history over SFTP");
+                parse_codex_history(&content, offset, limit)
+            }
+            Err(e) => {
+                tracing::debug!(path = %session_path, error = %e, "remote codex rollout unreadable");
                 Ok(HistoryResponse { messages: Vec::new(), has_more: false, model: None })
             }
         }

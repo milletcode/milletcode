@@ -13,6 +13,7 @@ pub use approval::{PendingControlInfo, PendingKind};
 mod history;
 pub use history::{
     read_session_history, parse_jsonl_history, read_smartcode_session_history, parse_smartcode_history,
+    read_codex_session_history, parse_codex_history,
     HistoryResponse,
 };
 
@@ -22,6 +23,7 @@ mod registry;
 mod session_manager;
 
 pub use adapters::claude::ClaudeAdapter;
+pub use adapters::codex::CodexAdapter;
 pub use adapters::deepseek::DeepSeekAdapter;
 pub use adapters::smartcode::SmartcodeAdapter;
 pub use registry::AgentRegistry;

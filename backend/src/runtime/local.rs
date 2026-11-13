@@ -42,7 +42,13 @@ impl Process for LocalProcess {
     }
 
     async fn kill(&mut self) -> Result<()> {
-        self.child.kill().await?;
+        // The child is its own group leader (spawn sets process_group(0)), so a
+        // negative-pid kill reaches grandchildren too. Fall back to the direct
+        // kill if the group signal fails (e.g. pid already gone).
+        let group = nix::unistd::Pid::from_raw(-(self.pid as i32));
+        if nix::sys::signal::kill(group, nix::sys::signal::Signal::SIGKILL).is_err() {
+            self.child.kill().await?;
+        }
         Ok(())
     }
 
@@ -90,6 +96,11 @@ impl Runtime for LocalRuntime {
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
+
+        // Own process group: kill() then takes down the whole tree. npm-shimmed
+        // CLIs (e.g. codex) spawn a grandchild vendor binary — killing only the
+        // shim pid would orphan it.
+        cmd.process_group(0);
 
         let child = cmd.spawn()?;
         Ok(Box::new(LocalProcess::new(child)))

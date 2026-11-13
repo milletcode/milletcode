@@ -542,6 +542,12 @@ pub struct AuthConfig {
     /// local 与 oauth2 目前为预留，选中即启动失败。留空启动即报错。
     #[serde(default)]
     pub mode: String,
+    /// 登录限速采信 X-Forwarded-For 的可信代理网段（CIDR 或裸 IP）。
+    /// 仅当 TCP 对端命中网段且带 x-millet-edge 标记头时，XFF 末位才作为
+    /// 限速 key；空列表 = 默认 loopback + RFC1918 内网段。x-millet-edge
+    /// 头本身可被任意客户端伪造，信任判定必须基于不可伪造的 TCP 对端地址。
+    #[serde(default)]
+    pub trusted_proxies: Vec<String>,
     /// plain 模式凭据（[auth.plain]）
     #[serde(default)]
     pub plain: PlainAuthConfig,
@@ -563,6 +569,11 @@ impl AuthConfig {
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
+        for entry in &self.trusted_proxies {
+            if crate::auth::IpNet::parse(entry).is_none() {
+                anyhow::bail!("auth.trusted_proxies entry is not a valid CIDR/IP: {entry}");
+            }
+        }
         match self.effective_mode() {
             "plain" => {
                 if self.plain.user.is_empty() {
@@ -1233,6 +1244,25 @@ impl ConfigManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auth_trusted_proxies_defaults_and_validation() {
+        // 未配置 = 空列表（运行时回退默认网段集合）
+        let a: AuthConfig = toml::from_str("").unwrap();
+        assert!(a.trusted_proxies.is_empty());
+
+        // 合法 CIDR / 裸 IP 通过，非法条目启动即拒
+        let ok: AuthConfig = toml::from_str(
+            "mode = 'plain'\ntrusted_proxies = ['10.0.0.0/8', '127.0.0.1']\n[plain]\nuser = 'u'\npassword = 'p'\n\n",
+        )
+        .unwrap();
+        assert!(ok.validate().is_ok());
+        let bad: AuthConfig = toml::from_str(
+            "mode = 'plain'\ntrusted_proxies = ['10.0.0.0/99']\n[plain]\nuser = 'u'\npassword = 'p'\n\n",
+        )
+        .unwrap();
+        assert!(bad.validate().is_err());
+    }
 
     #[test]
     fn session_settings_idle_defaults_backfill() {

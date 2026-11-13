@@ -7,7 +7,7 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::auth::{login_throttle_key, PLAIN_SESSION_COOKIE};
+use crate::auth::{login_throttle_key, trusted_proxy_nets, PLAIN_SESSION_COOKIE};
 use crate::AppState;
 
 /// GET /api/captcha — 登录页自举用的验证码（plain 公开路径）。
@@ -44,9 +44,13 @@ pub async fn login(
             .into_response();
     }
 
-    // IP 限速：滑动窗口内失败次数达阈值即拒绝（成功登录清零）。
-    let key = login_throttle_key(&headers, Some(addr));
-    if !state.login_throttle.check(&key) {
+    // 双维度限速：IP（滑动窗口内失败达阈值即拒）+ 用户名（换 IP / 伪造
+    // XFF 重置不了这条计数，是对爆破的硬上限；代价是知道用户名的攻击者
+    // 可恶意锁号 15 分钟，窗口短、成功登录即清零，可接受）。成功登录清零。
+    let nets = trusted_proxy_nets(&state.config_manager.config().auth.trusted_proxies);
+    let ip_key = login_throttle_key(&headers, Some(addr), &nets);
+    let user_key = format!("user:{}", req.user.trim().to_lowercase());
+    if !state.login_throttle.check(&ip_key) || !state.login_throttle.check(&user_key) {
         return (
             StatusCode::TOO_MANY_REQUESTS,
             Json(serde_json::json!({ "error": "rate_limited" })),
@@ -58,14 +62,16 @@ pub async fn login(
     let ok = crate::auth::constant_time_eq(req.user.trim(), &auth.plain.user)
         && crate::auth::constant_time_eq(&req.password, &auth.plain.password);
     if !ok {
-        state.login_throttle.record_failure(&key);
+        state.login_throttle.record_failure(&ip_key);
+        state.login_throttle.record_failure(&user_key);
         return (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({ "error": "invalid credentials" })),
         )
             .into_response();
     }
-    state.login_throttle.clear(&key);
+    state.login_throttle.clear(&ip_key);
+    state.login_throttle.clear(&user_key);
 
     let sid = state.plain_sessions.issue();
     let cookie = format!(

@@ -571,10 +571,11 @@
     const agentId = currentSession?.agent_id || ''
     const isClaude = agentId === 'claude' || agentId.toLowerCase().includes('claude')
     const isSmartcode = agentId === 'smartcode'
+    const isCodex = agentId === 'codex'
 
-    // smartcode：走会话级热切换（set_config），回执经 WS config_changed 确认；
+    // smartcode/codex：走会话级热切换（set_config），回执经 WS config_changed 确认；
     // 不发 /model 文本（console stdin 不解析 slash 命令），也不动全局 settings.json
-    if (isSmartcode && sessionId && !disabled) {
+    if ((isSmartcode || isCodex) && sessionId && !disabled) {
       try {
         await apiFetch(`/api/sessions/${sessionId}/config`, {
           method: 'POST',
