@@ -1,8 +1,8 @@
-# MilletCode 使用手册 / User Manual
+# Milletcode 使用手册 / User Manual
 
-MilletCode 是一个自托管的多Agent调度平台：把 Claude Code 等主流编程智能体装进浏览器工作台，统一管理会话、文件、终端与多台远程环境。
+Milletcode 是一个自托管的多Agent调度平台：把 Claude Code 等主流编程智能体装进浏览器工作台，统一管理会话、文件、终端与多台远程环境。
 
-MilletCode is a self-hosted multi-agent orchestration platform: it brings mainstream coding agents like Claude Code into a browser workbench, with unified management of sessions, files, terminals and multiple remote environments.
+Milletcode is a self-hosted multi-agent orchestration platform: it brings mainstream coding agents like Claude Code into a browser workbench, with unified management of sessions, files, terminals and multiple remote environments.
 
 - [简体中文](zh-CN/README.md)
 - [English](en/README.md)
@@ -29,8 +29,8 @@ Terminal direct-connect and port forwarding are currently alpha features under a
 
 ## 赞助支持 / Sponsor This Project
 
-开源不易。如果 MilletCode 帮到了你，欢迎请我们喝杯奶茶。
-Open source runs on coffee — if MilletCode helps you, consider buying us one.
+开源不易。如果 Milletcode 帮到了你，欢迎请我们喝杯奶茶。
+Open source runs on coffee — if Milletcode helps you, consider buying us one.
 
 | 微信 / WeChat | 支付宝 / Alipay | Bitcoin | Ethereum |
 |---|---|---|---|

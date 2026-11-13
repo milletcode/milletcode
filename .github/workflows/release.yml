@@ -213,24 +213,24 @@ jobs:
           cat <<'FOOTER' | sed "s/@TAG@/${TAG}/g" > footer.md
           ---
 
-          ## 安装
+          ## Install
 
-          **一条命令安装**（macOS / Linux，推荐）：
+          **One-line install** (macOS / Linux, recommended):
 
               curl -sfL https://milletcode.com/install.sh | sh -
 
-          钉住本版本：
+          Pin this version:
 
               MILLETCODE_VERSION=@TAG@ curl -sfL https://milletcode.com/install.sh | sh -
 
-          **Docker**：
+          **Docker**:
 
               docker run -d --name milletcode -p 3030:3030 \
                 -v milletcode-data:/config \
                 -v "$HOME/.milletcode/config.toml:/home/coder/.milletcode/config.toml" \
                 milletcode/milletcode:@TAG@
 
-          **手动安装**：下载对应平台的 `.tar.gz`，对照 `checksums.txt` 校验后解压，把 `milletcode` 放进 PATH。macOS 首次运行如遇安全提示：`xattr -d com.apple.quarantine ./milletcode`。
+          **Manual**: download the `.tar.gz` for your platform, verify it against `checksums.txt`, extract it, and put `milletcode` on your PATH. If macOS shows a security prompt on first run: `xattr -d com.apple.quarantine ./milletcode`.
           FOOTER
           { cat notes.md; echo; cat footer.md; } > body.md
           echo "----- body.md -----"

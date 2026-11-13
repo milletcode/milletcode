@@ -1,4 +1,5 @@
-//! 对外更新日志：POST /api/changelog {password} → CHANGELOG.md 内容。
+//! 对外更新日志：POST /api/changelog {password} → {content, content_en}
+//!（zh / en 两份 CHANGELOG 编译期嵌入）。
 //!
 //! 密码门独立于登录体系（PUBLIC_PATHS 豁免 Basic/ plain 认证），供
 //! milletcode.cn / milletcode.com / 玄米.中国 / 玄起.中国 等外部站点
@@ -73,9 +74,12 @@ fn failure_limiter() -> &'static FailureLimiter {
     LIMITER.get_or_init(FailureLimiter::default)
 }
 
-/// 对外更新日志 —— 仓库根 CHANGELOG.md 编译期嵌入，随版本一起发布。
-/// 内容面向客户：只讲功能价值，不出现技术词汇（撰写总纲领）。
-const CHANGELOG_MD: &str = include_str!("../../../CHANGELOG.md");
+/// 对外更新日志 —— 两份文件编译期嵌入，随版本一起发布。zh 是站内默认
+/// （旧调用方只认 content 字段）；en 与仓库根 CHANGELOG.md 同源，即
+/// GitHub Release notes 的正文。内容面向客户：只讲功能价值，不出现技术
+/// 词汇（撰写总纲领）。
+const CHANGELOG_MD_ZH: &str = include_str!("../../../CHANGELOG.zh-CN.md");
+const CHANGELOG_MD_EN: &str = include_str!("../../../CHANGELOG.md");
 
 /// 外部站点白名单：用户指定域名 + 中文域名的 punycode 形式，http/https 都放。
 const ALLOWED_ORIGINS: &[&str] = &[
@@ -140,7 +144,7 @@ fn changelog_response(password: &str, expected: &str) -> Response {
     }
     (
         [(header::CONTENT_TYPE, "application/json; charset=utf-8".to_string())],
-        Json(serde_json::json!({ "content": CHANGELOG_MD })),
+        Json(serde_json::json!({ "content": CHANGELOG_MD_ZH, "content_en": CHANGELOG_MD_EN })),
     )
         .into_response()
 }
@@ -195,6 +199,10 @@ mod tests {
         // 只要还是「# 标题 + ## 版本段」结构就说明嵌入了当前文件。
         assert!(content.contains("\n## v"));
         assert!(content.contains("[[beta]]"));
+        // 英文版与仓库根 CHANGELOG.md（GitHub Release notes 同源）一起嵌入
+        let content_en = v["content_en"].as_str().unwrap();
+        assert!(content_en.contains("# Changelog"));
+        assert!(content_en.contains("\n## v"));
     }
 
     #[test]

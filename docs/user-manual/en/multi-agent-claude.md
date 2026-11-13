@@ -1,6 +1,6 @@
 # Multi-Environment Claude
 
-Many teams juggle several Claude environments at once: a personal official account, a company relay gateway, different CLI versions... MilletCode models each of these as an **agent instance** — an independent configuration (binary path, API key, launch arguments, release channel) that you pick when creating a session.
+Many teams juggle several Claude environments at once: a personal official account, a company relay gateway, different CLI versions... Milletcode models each of these as an **agent instance** — an independent configuration (binary path, API key, launch arguments, release channel) that you pick when creating a session.
 
 ## Where instances live
 

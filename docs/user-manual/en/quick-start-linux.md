@@ -1,6 +1,6 @@
 # Quick Start (Linux)
 
-This guide installs MilletCode on a Linux server with a single command and registers it as a systemd service. Expect 1–2 minutes.
+This guide installs Milletcode on a Linux server with a single command and registers it as a systemd service. Expect 1–2 minutes.
 
 ## Prerequisites
 

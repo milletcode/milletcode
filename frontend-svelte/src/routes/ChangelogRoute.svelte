@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { _ } from 'svelte-i18n'
+  import { _, locale } from 'svelte-i18n'
   import { Lock, LockOpen, BookOpen, Bot, Copy, Github, Headphones, Heart } from 'lucide-svelte'
   import { apiFetch } from '$lib/api'
   import { renderMarkdown } from '$lib/markdown'
@@ -14,6 +14,7 @@
   let error = $state('')
   let busy = $state(false)
   let content = $state('')
+  let contentEn = $state('')
   let version = $state('')
 
   // markdown 里的 [[beta]] / [[alpha]] 标记渲染成扁平徽章。markdown-it html:false 会转义
@@ -27,9 +28,15 @@
     '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>' +
     'Alpha</span>'
 
+  // 双语正文：zh 恒有；en 缺失（旧后端）时回落 zh
+  const displayContent = $derived.by(() => {
+    if (($locale || '').startsWith('en')) return contentEn || content
+    return content
+  })
+
   const contentHtml = $derived.by(() => {
-    if (!content) return ''
-    return renderMarkdown(content)
+    if (!displayContent) return ''
+    return renderMarkdown(displayContent)
       .replaceAll('[[beta]]', BETA_BADGE)
       .replaceAll('[[alpha]]', ALPHA_BADGE)
   })
@@ -62,6 +69,7 @@
           }
         }
         content = data.content || ''
+        contentEn = data.content_en || ''
         gate = 'open'
       } else if (res.status === 403) {
         error = $_('changelog.wrongPassword')
@@ -90,6 +98,7 @@
     }
     pwInput = ''
     content = ''
+    contentEn = ''
     error = ''
     gate = 'locked'
   }

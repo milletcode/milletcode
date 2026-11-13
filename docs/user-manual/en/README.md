@@ -1,6 +1,6 @@
-# MilletCode User Manual (English)
+# Milletcode User Manual (English)
 
-MilletCode is a self-hosted multi-agent orchestration platform that brings mainstream coding agents like Claude Code into a browser workbench. You create sessions, give the agent a task, and it reads and writes code, runs commands, and delivers results inside your project directory (local or on a remote host). File management, terminals, port forwarding and skill distribution all live in the same workbench.
+Milletcode is a self-hosted multi-agent orchestration platform that brings mainstream coding agents like Claude Code into a browser workbench. You create sessions, give the agent a task, and it reads and writes code, runs commands, and delivers results inside your project directory (local or on a remote host). File management, terminals, port forwarding and skill distribution all live in the same workbench.
 
 ## What's in this manual
 

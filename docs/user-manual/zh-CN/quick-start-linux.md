@@ -1,6 +1,6 @@
 # 快速开始（Linux）
 
-本章带你在一台 Linux 服务器上用一条命令安装 MilletCode，并注册为 systemd 服务。全程约 1–2 分钟。
+本章带你在一台 Linux 服务器上用一条命令安装 Milletcode，并注册为 systemd 服务。全程约 1–2 分钟。
 
 ## 前置条件
 

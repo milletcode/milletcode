@@ -1,46 +1,46 @@
-# 更新日志
+# Changelog
 
-MilletCode® 多Agent调度平台 —— 我们把每一次进步都写在这里。
+Milletcode® multi-agent scheduling platform — every step forward, written down here. The Chinese edition lives in [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md).
 
 ## v0.11.1
 
-- [[beta]] **新增 Codex 编程智能体**：创建会话时多了一位新帮手。它干活的过程实时可见，拿不准的事会主动来问你、给出选项；需要你拍板的操作照常弹出审批；中断之后能从上次停下的地方继续，运行中还可以随时更换模型（尝鲜功能，欢迎反馈）。
-- **一条命令安装**：不用准备开发环境，打开官网复制一行命令，粘贴到终端就能装好运行；以后升级，也是同一条命令。
-- **项目主页焕新**：为什么需要这样一个工作台、它能帮你做什么、怎么快速上手——介绍全新改版，第一次来的朋友也能很快看懂。
+- **New Codex coding agent (beta)**: one more teammate to pick from when you create a session. You watch it work in real time; when it is unsure it asks you and offers choices; operations that need your sign-off still pop up an approval; after an interruption it picks up right where it left off, and you can switch models mid-run (beta, feedback welcome).
+- **One-line install**: no development environment to prepare — copy one command from the website, paste it into a terminal, and Milletcode is installed and running. Future upgrades use the very same command.
+- **Refreshed project homepage**: why you need this workbench, what it can do for you, and how to get started quickly — the introduction was rewritten from scratch, so first-time visitors can find their bearings fast.
 
 ## v0.11.0
 
-- **正式开源**：MilletCode 源代码正式对外开放，欢迎查看、反馈与共建。
-- **安全全面加固**：我们完成了一轮完整体检，修复了全部重要安全隐患，你的工作台、文件与数据更安全了。
-- **使用手册上线**：新增多语言使用手册（中文 / English），从安装启动、远程环境到多智能体配置，一册说清。
-- [[alpha]] **终端直连**：在会话里直接打开目标环境的终端，敲命令不必再来回切换（尝鲜功能，持续打磨中）。
-- [[alpha]] **端口转发**：把远程环境里的服务端口一键转到本地浏览器，调试远程服务就像在本地一样（尝鲜功能，持续打磨中）。
+- **Now open source**: the Milletcode source code is publicly available — explore it, give feedback, and build with us.
+- **Security hardened across the board**: we ran a complete health check and fixed every important security issue — your workbench, files, and data are safer.
+- **User manual published**: a multilingual manual (Chinese / English) that covers installation, remote environments, and multi-agent setup in one place.
+- **Terminal direct-connect (alpha)**: open a terminal on the target environment right inside a session — no more switching back and forth (alpha, still being polished).
+- **Port forwarding (alpha)**: map a service port from a remote environment into your local browser with one click — debugging a remote service now feels like debugging a local one (alpha, still being polished).
 
 ## v0.10.0
 
-- **全新的登录方式**：支持账号密码登录，登录页配备图形验证码，自动拦截恶意尝试，你的工作台更安全。
-- **会话历史更流畅**：进入会话自动定位到最新消息；向上滚动即可按需加载更早的记录，再长的对话也不卡顿。
-- **随时打断**：任务运行时，发送按钮一键变为「终止」，想停就停、想改就改。
-- **闲置提醒**：智能体空闲下来时自动给你发消息，任务完成、需要新安排，都不会再被错过。
-- **会话中随时换模型**：SmartCode 智能体支持运行中直接切换模型，换个思路不必重开会话。
-- **全新审批机制**：需要你拍板的操作清晰呈现，其余操作不再频繁打断你。
-- **会话快捷连接**：从会话页直达目标环境，少一次来回切换。
-- **代码仓库接入更灵活**：支持账号密码拉取私有仓库，远程目录也能直接克隆进来。
-- **智能体版本一目了然**：创建会话的选择器焕新，哪些是正式版、哪些还在尝鲜阶段（beta / alpha），一眼分辨。
-- **崩溃原因看得见**：智能体意外退出时直接告诉你原因，不用再猜；正常停止也不会再被误报为崩溃。
-- **停止更彻底**：修复会话「看起来停了、其实还在偷偷运行」的问题，资源不再白白占用。
-- **文件一键下载**：文件列表里即可直接下载单个文件，不必再敲命令。
-- **重启更稳妥**：终端重启前先确认，可勾选「不再提示」，误触不再打断工作。
-- **配置更听话**：已有配置在升级后保持原样，不会被悄悄覆盖。
-- **部署更放心**：升级与重启不再丢数据，文件归属更可靠。
-- [[beta]] **技能模块上线**：官方技能包一键安装/卸载，第三方技能包审阅后安装。
-- [[beta]] **技能包一键分发**：把一个技能同时安装到多台设备、多种编程智能体，安装过程实时可见，装完自动验收。
-- [[beta]] **技能安装更稳、更透明**：安装前说清楚「装什么、装到哪」，安装状态只保留关键信息，装没装好一眼就能看清。
-- [[beta]] **新增官方技能「项目初始化」**：用官方推荐的技术栈一键初始化你的项目。
-- [[beta]] **技能安装记录更好管理**：第三方技能的安装留痕支持逐条删除；正在安装中的记录受到保护，不会被误删。
-- **细节修复**：修复指令生成面板失效、消息里的链接在手机浏览器上无法新开标签等问题。
+- **A new way to sign in**: account-and-password login, with a captcha on the login page that automatically blocks malicious attempts — your workbench is safer.
+- **Smoother session history**: opening a session takes you straight to the latest message; scroll up to load earlier records on demand — even very long conversations stay smooth.
+- **Interrupt anytime**: while a task is running, the send button turns into "Stop" — stop or revise whenever you like.
+- **Idle alerts**: when an agent becomes idle it sends you a message, so a finished task or a request for new instructions never goes unnoticed.
+- **Switch models mid-session**: the SmartCode agent supports switching models while running — change your approach without restarting the session.
+- **Redesigned approvals**: operations that need your decision are presented clearly; everything else no longer interrupts you so often.
+- **Quick-connect from a session**: jump straight to the target environment from the session page — one less round trip.
+- **More flexible repository access**: clone private repositories with a username and password, including straight into remote directories.
+- **Agent channels at a glance**: the session-creation picker was redesigned, so you can instantly tell stable from experimental (beta / alpha).
+- **Crash reasons made visible**: when an agent exits unexpectedly it tells you why — no more guessing; normal stops are no longer misreported as crashes.
+- **Cleaner stops**: fixed sessions that "looked stopped but were still quietly running", so resources are no longer wasted.
+- **One-click file download**: download a single file straight from the file list — no commands needed.
+- **Safer restarts**: a terminal restart now asks first, with a "don't ask again" option, so an accidental click no longer interrupts your work.
+- **Configs are respected**: an existing configuration stays exactly as it is after an upgrade — never silently overwritten.
+- **More reliable deployments**: upgrades and restarts no longer lose data, and file ownership is more dependable.
+- **Skills module (beta)**: install or uninstall official skill packs with one click; third-party packs install after you review them.
+- **One-click skill distribution (beta)**: install one skill onto multiple devices and multiple coding agents at once, with live progress and automatic verification when the install finishes.
+- **Steadier, clearer skill installs (beta)**: before installing, it says exactly what will be installed and where; install status keeps only the key information, so success or failure is clear at a glance.
+- **New official skill "Project Init" (beta)**: initialize your project with the officially recommended tech stack in one go.
+- **Better-behaved install records (beta)**: third-party skill install records can be deleted one by one; records that are still installing are protected from accidental deletion.
+- **Detail fixes**: fixed the command-generation panel going dead, and links in messages failing to open a new tab on mobile browsers, among other issues.
 
-## 更早版本
+## Earlier versions
 
-- **品牌焕新**：MilletCode® 的定位升级为「多Agent调度平台」，我们把你的想法变成软件。
-- 核心功能开发经过数月的研发与测试，正式上线。
+- **Rebrand**: Milletcode® is now positioned as a "multi-agent scheduling platform" — we turn your ideas into software.
+- Core features officially launched after months of development and testing.

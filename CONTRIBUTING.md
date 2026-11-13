@@ -1,6 +1,6 @@
-# Contributing to MilletCode
+# Contributing to Milletcode
 
-Thanks for your interest in improving MilletCode! This guide covers how to set up a
+Thanks for your interest in improving Milletcode! This guide covers how to set up a
 development environment, run the project locally, and submit changes.
 
 For architecture and API details, see [docs/developer-guide.md](docs/developer-guide.md).
@@ -103,6 +103,7 @@ Types in use: `feat`, `fix`, `docs`, `test`, `chore`, `refactor`, `perf`, `ci`.
 1. Fork / branch from `main`; keep branches focused on one topic.
 2. Make sure the checks above pass locally.
 3. Open a PR describing **why** the change is needed; link related issues.
+   Opening a PR means you agree to the [contribution terms](#license).
 4. For user-facing changes, update the affected docs (README and the bilingual user
    manual where applicable).
 5. Keep diffs minimal — no drive-by refactors or formatting sweeps in unrelated files.
@@ -115,5 +116,54 @@ reproduce the problem.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the
-[AGPL-3.0-only](LICENSE) license used by this project.
+Milletcode is distributed under [AGPL-3.0-only](LICENSE).
+
+**Contribution terms.** Contributions you submit are licensed to the project
+under the [MIT License](https://spdx.org/licenses/MIT.html). In these terms,
+"Milletcode" means this project together with its official distributions
+under any license. By submitting a contribution, you:
+
+- grant the project maintainers a perpetual, worldwide, non-exclusive,
+  royalty-free, sublicensable right to use, reproduce, modify, and distribute
+  your contribution, and to incorporate it into Milletcode distributed under
+  AGPL-3.0-only or any other license the maintainers choose for official
+  distributions;
+- grant the project maintainers a perpetual, worldwide, non-exclusive,
+  royalty-free patent license to make, use, sell, and otherwise distribute
+  your contribution, limited to patent claims you have the right to license
+  that are necessarily infringed by your contribution alone or in combination
+  with Milletcode. This patent license terminates as of the date you institute
+  patent litigation claiming that Milletcode, or a contribution incorporated
+  into it, infringes your patents;
+- confirm that you have the legal right to submit the contribution and to
+  grant these licenses;
+- declare that the contribution is your original creation, or material you
+  are entitled to submit (third-party material only with attribution and
+  under a license compatible with both AGPL-3.0-only and these terms); in
+  particular, if the contribution was created within the scope of your
+  employment, or an employer or client otherwise holds rights in it, you
+  declare that you have obtained that party's permission or waiver to
+  submit it under these terms;
+- accept that the maintainers rely on these declarations in good faith when
+  accepting and redistributing contributions: responsibility for any
+  misrepresentation rests with the contributor who made it, and the
+  maintainers may remove a contribution found to breach these declarations;
+- agree that, to the extent permitted by applicable law, you will not
+  exercise any moral rights you hold in the contribution (such as rights of
+  attribution or integrity) against the maintainers or their licensees,
+  insofar as such restraint is necessary to allow the contribution to be
+  used, modified, and distributed under these terms;
+- agree that no trademark rights are granted (see [TRADEMARKS.md](TRADEMARKS.md)).
+
+The maintainers' commitment in return: every contribution accepted into
+Milletcode remains publicly available under AGPL-3.0-only. Any other license
+the maintainers choose for official distributions (for example, a commercial
+license) is additional to that availability and never replaces it.
+
+These terms apply only to contributions submitted by external contributors.
+The rights project maintainers hold in code they authored themselves are not
+restricted or diminished by this section.
+
+**Acceptance.** You accept these terms by submitting your first pull request
+to this repository. The [Pull requests](#pull-requests) section and the
+pull request template repeat this notice, so you see it at submission time.

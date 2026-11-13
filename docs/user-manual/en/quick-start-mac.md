@@ -1,6 +1,6 @@
 # Quick Start (macOS)
 
-This guide installs MilletCode on a macOS machine with a single command and registers it as a boot-time system service. Expect 1–2 minutes.
+This guide installs Milletcode on a macOS machine with a single command and registers it as a boot-time system service. Expect 1–2 minutes.
 
 ## Prerequisites
 

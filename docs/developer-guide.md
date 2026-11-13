@@ -1,4 +1,4 @@
-# MilletCode Developer Guide
+# Milletcode Developer Guide
 
 Multi-agent session management platform for AI coding agents (Claude Code, DeepSeek/Codewhale, SmartCode).
 
@@ -25,7 +25,7 @@ Multi-agent session management platform for AI coding agents (Claude Code, DeepS
 
 ## Overview
 
-MilletCode is a Rust + Svelte web application that manages multiple AI coding agent sessions simultaneously. It provides:
+Milletcode is a Rust + Svelte web application that manages multiple AI coding agent sessions simultaneously. It provides:
 
 - **Unified interface** — manage Claude Code, Codewhale (DeepSeek-TUI), SmartCode and other agents from one dashboard
 - **Real-time output** — WebSocket streams agent output, approval requests, and status changes live

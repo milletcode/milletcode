@@ -1,6 +1,6 @@
 # Remote Directories
 
-MilletCode is not limited to local projects: any host you can SSH into can have its directories attached to the workbench as projects. The agent reads and writes files and runs commands directly on the remote host — your browser is just a window.
+Milletcode is not limited to local projects: any host you can SSH into can have its directories attached to the workbench as projects. The agent reads and writes files and runs commands directly on the remote host — your browser is just a window.
 
 ## How it works
 
@@ -18,7 +18,7 @@ MilletCode is not limited to local projects: any host you can SSH into can have 
    which claude   # note the absolute path, e.g. /home/deploy/.local/bin/claude
    ```
 
-2. From the machine running MilletCode, set up passwordless SSH:
+2. From the machine running Milletcode, set up passwordless SSH:
 
    ```bash
    ssh-keygen -t ed25519            # skip if you already have a key
@@ -70,7 +70,7 @@ Restart the service (`make service-restart`) and projects on that host appear in
 
 - A remote directory means the agent can run arbitrary commands on that host — only attach hosts you own and trust;
 - Terminal direct-connect and port forwarding are alpha features: the terminal exposes the target's shell to the browser session, and port forwarding maps remote services onto the visitor's local 127.0.0.1. Use them only when the workbench and the remote host sit on trusted networks;
-- SSH private keys never leave the machine running MilletCode; they are never sent to the browser.
+- SSH private keys never leave the machine running Milletcode; they are never sent to the browser.
 
 ## Next steps
 
