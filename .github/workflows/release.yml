@@ -1,0 +1,249 @@
+name: Release
+
+# 发布规则：只在 staging / main 分支上做——push 即触发，无需打 tag。
+# 版本号 = CHANGELOG.md 顶部版本段（## vX.Y.Z...）；该版本已有 Release 则跳过全部下游。
+# tag 是发布的产物：gh release create --target 自动打在本次推送的提交上。
+on:
+  push:
+    branches: [main, staging]
+
+# staging 与 main 同 sha 互推是常态，串行去重：后到的 run 会看到先到的 Release 而跳过
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write # gh release create + 自动打 tag
+  actions: read
+
+env:
+  IMAGE: milletcode/milletcode
+
+jobs:
+  # 守门 + 版本解析：CHANGELOG 顶部段即本次要发的版本；已发过则下游全部跳过（不浪费构建时长）
+  notes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      skip: ${{ steps.version.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Resolve version from CHANGELOG
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # 本 job 无 git 仓库上下文之外的 gh 调用同样需要显式仓库
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          TAG=$(awk '/^## v/ { print $2; exit }' CHANGELOG.md)
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "::error::CHANGELOG.md 顶部没有可识别的版本段（## vX.Y.Z...）" ; exit 1 ;;
+          esac
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Release ${TAG} 已存在，本次跳过"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "待发布：${TAG}"
+          fi
+      - name: Extract changelog section
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -eu
+          awk -v section="## ${TAG}" '
+            $0 == section { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::CHANGELOG.md 的 ${TAG} 段为空"
+            exit 1
+          fi
+          echo "----- notes.md -----"
+          cat notes.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: notes.md
+          if-no-files-found: error
+
+  # linux 二进制与发布镜像同源：一次 docker build 两用（抽取 /app/milletcode + 推 per-arch 镜像）
+  build-linux:
+    needs: notes
+    if: needs.notes.outputs.skip != 'true'
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      TAG: ${{ needs.notes.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and push per-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          load: true
+          tags: ${{ env.IMAGE }}:${{ env.TAG }}-${{ matrix.arch }}
+          # GIT_VERSION = 版本号：与 Dockerfile 稳定线注释的既定语义一致
+          build-args: |
+            GIT_VERSION=${{ env.TAG }}
+            GIT_COMMIT=${{ github.sha }}
+            GIT_BRANCH=${{ github.ref_name }}
+          cache-from: type=gha,scope=build-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=build-${{ matrix.arch }}
+      - name: Extract and package binary
+        run: |
+          set -eu
+          id=$(docker create "${IMAGE}:${TAG}-${{ matrix.arch }}")
+          docker cp "$id":/app/milletcode ./milletcode
+          docker rm "$id" >/dev/null
+          chmod +x milletcode
+          tar czf "milletcode-${TAG}-linux-${{ matrix.arch }}.tar.gz" milletcode
+          ls -la "milletcode-${TAG}-linux-${{ matrix.arch }}.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: milletcode-${{ env.TAG }}-linux-${{ matrix.arch }}
+          path: milletcode-${{ env.TAG }}-linux-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
+  # macOS 双架构：arm64 原生 + amd64 同机交叉编译（apple-darwin 目标无需交叉工具链）
+  build-macos:
+    needs: notes
+    if: needs.notes.outputs.skip != 'true'
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      TAG: ${{ needs.notes.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.95
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # version.json 必须显式传版本生成：npm prebuild 钩子已移除，不传参会把旧版本号嵌进前端
+      - name: Stamp version
+        run: ./scripts/generate-version.sh "${TAG}"
+      - name: Build frontend
+        working-directory: frontend-svelte
+        run: |
+          npm ci
+          npm run build
+      - name: Build binaries
+        run: |
+          cargo build --release -p agent-console --target aarch64-apple-darwin
+          cargo build --release -p agent-console --target x86_64-apple-darwin
+      - name: Package
+        run: |
+          set -eu
+          cp target/aarch64-apple-darwin/release/agent-console milletcode
+          tar czf "milletcode-${TAG}-darwin-aarch64.tar.gz" milletcode
+          cp target/x86_64-apple-darwin/release/agent-console milletcode
+          tar czf "milletcode-${TAG}-darwin-amd64.tar.gz" milletcode
+          ls -la milletcode-*.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: milletcode-${{ env.TAG }}-darwin
+          path: milletcode-${{ env.TAG }}-darwin-*.tar.gz
+          if-no-files-found: error
+
+  # 合并多架构 manifest：milletcode/milletcode:vX.Y.Z
+  merge:
+    needs: [notes, build-linux]
+    if: needs.notes.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TAG: ${{ needs.notes.outputs.tag }}
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Merge multi-arch manifest
+        run: |
+          docker buildx imagetools create \
+            -t "${IMAGE}:${TAG}" \
+            "${IMAGE}:${TAG}-amd64" \
+            "${IMAGE}:${TAG}-arm64"
+
+  # 建 Release：CHANGELOG 段 + 安装脚注，四平台包 + checksums；tag 自动打在本次推送的提交上
+  release:
+    needs: [notes, build-linux, build-macos, merge]
+    if: needs.notes.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TAG: ${{ needs.notes.outputs.tag }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: milletcode-*
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+      - name: Checksums
+        run: shasum -a 256 milletcode-*.tar.gz > checksums.txt
+      - name: Compose release body
+        run: |
+          set -eu
+          cat <<'FOOTER' | sed "s/@TAG@/${TAG}/g" > footer.md
+          ---
+
+          ## 安装
+
+          **一条命令安装**（macOS / Linux，推荐）：
+
+              curl -sfL https://milletcode.com/install.sh | sh -
+
+          钉住本版本：
+
+              MILLETCODE_VERSION=@TAG@ curl -sfL https://milletcode.com/install.sh | sh -
+
+          **Docker**：
+
+              docker run -d --name milletcode -p 3030:3030 \
+                -v milletcode-data:/config \
+                -v "$HOME/.milletcode/config.toml:/home/coder/.milletcode/config.toml" \
+                milletcode/milletcode:@TAG@
+
+          **手动安装**：下载对应平台的 `.tar.gz`，对照 `checksums.txt` 校验后解压，把 `milletcode` 放进 PATH。macOS 首次运行如遇安全提示：`xattr -d com.apple.quarantine ./milletcode`。
+          FOOTER
+          { cat notes.md; echo; cat footer.md; } > body.md
+          echo "----- body.md -----"
+          cat body.md
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # 本 job 无 checkout，gh 无法从 git remote 推断仓库，必须显式指定
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          args=(--title "${TAG}" --notes-file body.md --target "${GITHUB_SHA}")
+          case "${TAG}" in
+            *-alpha*|*-beta*|*-rc*) args+=(--prerelease) ;;
+          esac
+          gh release create "${TAG}" milletcode-*.tar.gz checksums.txt "${args[@]}"
