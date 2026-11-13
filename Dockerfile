@@ -62,9 +62,10 @@ RUN mkdir -p /usr/local/cargo && \
 WORKDIR /src
 COPY Cargo.toml Cargo.lock* ./
 COPY backend/ ./backend/
-# CHANGELOG.md 必须进编译：api/changelog.rs 用 include_str!("../../../CHANGELOG.md")
-# 把更新日志正文嵌进二进制，缺这个文件 cargo 直接编译失败（changelog 功能上线时踩过）。
-COPY CHANGELOG.md ./
+# 两份 CHANGELOG 都必须进编译：api/changelog.rs 用 include_str! 把中英文
+# 更新日志正文嵌进二进制，缺任一文件 cargo 直接编译失败（changelog 功能
+# 上线时踩过；2026-11 双语拆分又踩了 zh-CN 这份没 COPY 的同一坑）。
+COPY CHANGELOG.md CHANGELOG.zh-CN.md ./
 
 # 复制前端构建产物到 WORKDIR(/src) 下的 frontend-svelte/dist，供 rust-embed 嵌入
 # 路径必须与上面 frontend 阶段的 WORKDIR 一致（vite 的 outDir 是项目根下的 dist）。
