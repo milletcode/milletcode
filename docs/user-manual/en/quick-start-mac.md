@@ -1,18 +1,10 @@
 # Quick Start (macOS)
 
-This guide takes a macOS machine from source code to a running MilletCode installed as a boot-time system service. Expect 10–20 minutes depending on compile speed.
+This guide installs MilletCode on a macOS machine with a single command and registers it as a boot-time system service. Expect 1–2 minutes.
 
 ## Prerequisites
 
 - macOS 12 or later
-- Rust 1.75 or later:
-
-  ```bash
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-  ```
-
-- Node.js 18 or later (with npm)
-- Git
 - Claude Code CLI installed and signed in:
 
   ```bash
@@ -20,71 +12,40 @@ This guide takes a macOS machine from source code to a running MilletCode instal
   claude   # follow the prompts to sign in
   ```
 
-## 1. Get the source
+## 1. One-line install
 
 ```bash
-git clone https://github.com/milletcode/milletcode.git
-cd milletcode
+curl -sfL https://milletcode.com/install.sh | sh -
 ```
 
-## 2. Build and install
+The installer takes care of everything:
 
-```bash
-make install
-```
+1. Downloads and installs the prebuilt binary to `/usr/local/bin/milletcode` (via sudo when needed);
+2. Creates the workspace `~/Codes/milletcode-workspace` and generates `~/.milletcode/config.toml` with a **random login and password** (an existing config is never touched);
+3. Registers a macOS LaunchAgent (`~/Library/LaunchAgents/com.milletcode.milletcode.plist`) that starts the service at login, and starts it right away.
 
-This single command does everything:
+**The last line of the installer output is your randomly generated login credentials** (e.g. `Login credentials: user-xxxx / xxxx`) — save it.
 
-1. Generates version info, builds the frontend (npm) and the backend (release mode, with the frontend embedded);
-2. Installs the binary to `~/.local/bin/milletcode` (make sure it is on your PATH);
-3. Registers a macOS LaunchAgent (`~/Library/LaunchAgents/com.milletcode.milletcode.plist`) that starts the service at login.
+Options: pin a version with `MILLETCODE_VERSION=v0.11.1 curl -sfL … | sh -`; add `MILLETCODE_HOST=127.0.0.1` to bind locally only.
 
-On first start, a default configuration is generated at `~/.milletcode/config.toml`.
+## 2. Open the workbench
 
-## 3. Configure login
+Visit <http://127.0.0.1:9527> (script-installed instances listen on 9527) and sign in with the credentials printed at the end of the install (the login page includes a captcha).
 
-The auth mode (`auth.mode`) is required — the service refuses to start when it is empty. Edit `~/.milletcode/config.toml`:
+- The default bind address is `0.0.0.0`, so other devices on your LAN can reach it via `http://<your-ip>:9527`.
+- To change the login, edit the `[auth.plain]` section of `~/.milletcode/config.toml` (an `sk-` prefixed static API token is optional, for scripts / CI calling the REST API) and restart the service.
 
-```toml
-[auth]
-mode = "plain"
+## 3. Everyday service commands
 
-[auth.plain]
-user = "admin"
-password = "change-me-to-a-strong-password"
-# Optional: static API token (sk- prefix) for scripts / CI calling the REST API
-# token = "sk-xxxxxxxx"
-```
-
-Restart the service:
-
-```bash
-make service-restart
-```
-
-## 4. Open the workbench
-
-Visit <http://127.0.0.1:3030> and sign in with the credentials above (the login page includes a captcha).
-
-- The default bind address is `0.0.0.0:3030`, so other devices on your LAN can reach it.
-- Local-only? Reinstall the service with an explicit bind address:
-
-  ```bash
-  make service-install HOST=127.0.0.1
-  ```
-
-## 5. Everyday service commands
-
-| Command | Effect |
+| Action | Command |
 |---|---|
-| `make service-status` | Show service status |
-| `make service-stop` | Stop the service |
-| `make service-start` | Start the service |
-| `make service-restart` | Restart the service |
-| `make update` | Rebuild after pulling and replace the binary |
-| `make service-uninstall` | Stop and uninstall the service |
+| Stop | `launchctl unload ~/Library/LaunchAgents/com.milletcode.milletcode.plist` |
+| Start | `launchctl load ~/Library/LaunchAgents/com.milletcode.milletcode.plist` |
+| Logs | `tail -f ~/.milletcode/logs/milletcode.log` |
+| Upgrade | re-run the install one-liner |
+| Uninstall | stop the service, then remove the plist above and `/usr/local/bin/milletcode` |
 
-## 6. Create your first session
+## 4. Create your first session
 
 1. Add a project directory to the discovery paths ("Add project" in the UI, or edit `[project.discovery_paths]` in `config.toml` — see [Remote Directories](remote-directories.md) for the details);
 2. On the project page choose Claude Code and create a session;
@@ -92,7 +53,7 @@ Visit <http://127.0.0.1:3030> and sign in with the credentials above (the login 
 
 ## Development mode
 
-For day-to-day development use `make dev`: backend on `127.0.0.1:3030` plus a hot-reloading frontend on `0.0.0.0:5180`. During development, open <http://127.0.0.1:5180>.
+For day-to-day development use `make dev`: backend on `127.0.0.1:3030` plus a hot-reloading frontend on `0.0.0.0:5180`. During development, open <http://127.0.0.1:5180> (this never clashes with a script-installed instance on 9527). See [CONTRIBUTING.md](https://github.com/milletcode/milletcode/blob/main/CONTRIBUTING.md) in the repository root to get involved.
 
 ## Security notes (alpha features)
 

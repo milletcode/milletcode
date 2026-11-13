@@ -193,7 +193,24 @@ Multica：   Multica Server → WebSocket → 工作机器上的 Multica daemon 
 
 ## 快速开始
 
-### Docker（推荐）
+### 一条命令安装（推荐）
+
+macOS / Linux，无需预装任何开发环境：
+
+```bash
+curl -sfL https://milletcode.com/install.sh | sh -
+```
+
+脚本会下载对应平台的预编译二进制并完成全部初始化：
+
+1. 安装到 `/usr/local/bin/milletcode`（`MILLETCODE_BIN_DIR` 可改，需要时通过 sudo）；
+2. 创建工作区 `~/Codes/milletcode-workspace`，生成 `~/.milletcode/config.toml`——登录账号与密码均为随机生成（已有配置不会被覆盖）；
+3. 注册系统服务（macOS LaunchAgent / Linux systemd，服务名 `milletcode`），设为开机自启并立即启动；
+4. **安装输出的最后一行是随机生成的登录凭据**，请妥善保存。
+
+浏览器打开 <http://127.0.0.1:9527> 登录。脚本安装的实例监听 9527，与开发实例（3030）互不冲突，可在同一台机器并存。常用变量：钉住版本 `MILLETCODE_VERSION=vX.Y.Z`、只绑本机 `MILLETCODE_HOST=127.0.0.1`，完整列表见 `sh install.sh --help`。升级：重新执行同一条命令。
+
+### Docker
 
 官方镜像发布在 Docker Hub：`main` 分支 → `milletcode/milletcode:latest`（可追溯 tag `main-<sha8>`），`staging` 分支 → `:staging`。
 
@@ -206,7 +223,7 @@ docker run -d --name milletcode -p 3030:3030 \
 
 容器以 `coder` 用户运行：会话等数据落在 `/config` 卷，配置文件按 subPath 挂载到 `/home/coder/.milletcode/config.toml`（先按[配置](#配置)一节写好 `auth.mode` 再启动）。
 
-### 从源码运行
+### 从源码构建（开发）
 
 需要准备：Rust 1.75+、Node.js 18+ 与 npm、Git 和基础编译工具、已安装并完成登录的智能体 CLI（如 Claude Code）；接入远程项目还需要可用的 SSH 密钥登录环境。
 
@@ -222,7 +239,7 @@ make init
 make service-restart
 ```
 
-本机使用时，浏览器访问 <http://127.0.0.1:3030>；服务器部署时替换为对应 IP 或域名。
+本机使用时，浏览器访问 <http://127.0.0.1:3030>；服务器部署时替换为对应 IP 或域名。参与开发（本地启动、测试、提交规范）请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ### 开发模式
 

@@ -194,7 +194,24 @@ Multica:    Multica Server → WebSocket → Multica daemon on work machines →
 
 ## Getting Started
 
-### Docker (recommended)
+### One-line install (recommended)
+
+macOS / Linux, no development tooling required:
+
+```bash
+curl -sfL https://milletcode.com/install.sh | sh -
+```
+
+The installer downloads the prebuilt binary for your platform and sets everything up:
+
+1. Installs to `/usr/local/bin/milletcode` (`MILLETCODE_BIN_DIR` to override; sudo only when needed);
+2. Creates the workspace `~/Codes/milletcode-workspace` and generates `~/.milletcode/config.toml` with a **random login and password** (an existing config is never touched);
+3. Registers a system service (launchd on macOS / systemd on Linux, service name `milletcode`), enabled at boot and started immediately;
+4. **The last line of the installer output is your randomly generated login credentials** — save it.
+
+Open <http://127.0.0.1:9527> and sign in. Script-installed instances listen on 9527, which never clashes with dev instances (3030), so both can coexist on one machine. Useful variables: pin a version with `MILLETCODE_VERSION=vX.Y.Z`, bind locally only with `MILLETCODE_HOST=127.0.0.1`; see `sh install.sh --help` for the full list. Upgrade: re-run the same one-liner.
+
+### Docker
 
 The official image is published on Docker Hub: `main` branch → `milletcode/milletcode:latest` (traceable tag `main-<sha8>`), `staging` branch → `:staging`.
 
@@ -207,7 +224,7 @@ docker run -d --name milletcode -p 3030:3030 \
 
 The container runs as the `coder` user: session data lives in the `/config` volume, and the config file is mounted (subPath) at `/home/coder/.milletcode/config.toml` — set `auth.mode` (see [Configuration](#configuration)) before starting.
 
-### From source
+### Build from source (development)
 
 You need: Rust 1.75+, Node.js 18+ with npm, Git and build tooling, plus an installed and logged-in agent CLI (e.g. Claude Code). SSH key access is required for remote projects.
 
@@ -223,7 +240,7 @@ make init
 make service-restart
 ```
 
-For local use, open <http://127.0.0.1:3030>; for server deployments, substitute the IP or domain.
+For local use, open <http://127.0.0.1:3030>; for server deployments, substitute the IP or domain. To participate in development (local setup, tests, commit conventions), read [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Development mode
 

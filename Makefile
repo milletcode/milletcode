@@ -180,19 +180,8 @@ init-config:
 		echo "✓ 已创建 $$HOME/.milletcode/config.toml"; \
 		echo "✓ 已创建工作目录 $$HOME/Codes/milletcode 与 $$HOME/Codes/smartcode"; \
 	fi; \
-	LOGIN_USER=$$(awk '/^\[auth\.plain\]/{f=1;next} /^\[/{f=0} f && /^user *=/{sub(/^user *= *"/,""); sub(/".*/,""); print; exit}' "$$HOME/.milletcode/config.toml"); \
-	LOGIN_PASS=$$(awk '/^\[auth\.plain\]/{f=1;next} /^\[/{f=0} f && /^password *=/{sub(/^password *= *"/,""); sub(/".*/,""); print; exit}' "$$HOME/.milletcode/config.toml"); \
 	echo ""; \
-	echo "========================================"; \
-	if [ -n "$$LOGIN_USER" ] && [ -n "$$LOGIN_PASS" ]; then \
-		echo "  登录账号: $$LOGIN_USER"; \
-		echo "  登录密码: $$LOGIN_PASS"; \
-		echo "  改账号密码: 编辑 $$HOME/.milletcode/config.toml 的 [auth.plain] 段后重启服务"; \
-	else \
-		echo "  登录方式: 未使用账号密码（见 $$HOME/.milletcode/config.toml 的 [auth] 段）"; \
-	fi; \
-	echo "========================================"; \
-	echo ""; \
+	echo "登录账号密码: 见 $$HOME/.milletcode/config.toml 的 [auth.plain] 段（随机生成）"; \
 	echo "提示: 服务启动后，请记得在网页「设置」中配置自己的 GPT API 密钥。"
 
 # 一键初始化：输入 yes 确认后依次执行 check → init-config → install → service-stop → dev。

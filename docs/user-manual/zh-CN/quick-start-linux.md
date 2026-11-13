@@ -1,96 +1,57 @@
 # 快速开始（Linux）
 
-本章带你在一台 Linux 服务器上从源码跑起 MilletCode，并安装为 systemd 服务。以 Ubuntu/Debian 为例，其他发行版仅包管理器命令不同。
+本章带你在一台 Linux 服务器上用一条命令安装 MilletCode，并注册为 systemd 服务。全程约 1–2 分钟。
 
 ## 前置条件
 
-- Rust 1.75 或更高：
-
-  ```bash
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-  ```
-
-- Node.js 18 或更高（含 npm）。Ubuntu 可用 NodeSource 源或 nvm 安装；
-- Git、build-essential（gcc/g++/make，编译 Rust 依赖需要）：
-
-  ```bash
-  sudo apt update && sudo apt install -y build-essential git
-  ```
-
-- 已安装并登录的 Claude Code CLI：
+- 已安装并登录的 Claude Code CLI（需要 Node.js）：
 
   ```bash
   npm install -g @anthropic-ai/claude-code
   claude   # 按提示完成登录
   ```
 
-## 1. 获取源码
+## 1. 一条命令安装
 
 ```bash
-git clone https://github.com/milletcode/milletcode.git
-cd milletcode
+curl -sfL https://milletcode.com/install.sh | sh -
 ```
 
-## 2. 构建并安装
+脚本会自动完成：
 
-```bash
-make install
-```
+1. 下载并安装预编译二进制到 `/usr/local/bin/milletcode`（需要 sudo）；
+2. 创建工作区 `~/Codes/milletcode-workspace`，生成 `~/.milletcode/config.toml`——登录账号与密码均为随机生成（已有配置不会被覆盖）；
+3. 注册 systemd 服务（`/etc/systemd/system/milletcode.service`，服务名 `milletcode`），设为开机自启并立即启动。
 
-这一条命令会完成全部工作：
+**安装输出的最后一行是随机生成的登录凭据**（形如 `Login credentials: user-xxxx / xxxx`），请妥善保存。
 
-1. 生成版本信息、构建前端（npm）并构建后端（release 模式，前端产物内嵌其中）；
-2. 安装命令行到 `~/.local/bin/milletcode`（请确认它在 PATH 里）；
-3. 注册 systemd 服务（`/etc/systemd/system/milletcode.service`，服务名 `milletcode`，需要 sudo），并设为开机自启。
+可选项：钉住版本 `MILLETCODE_VERSION=v0.11.1 curl -sfL … | sh -`；只绑定本机时加 `MILLETCODE_HOST=127.0.0.1`。
 
-首次启动时会在 `~/.milletcode/config.toml` 生成默认配置。
+## 2. 访问工作台
 
-## 3. 配置登录
+浏览器打开 `http://<服务器地址>:9527`（脚本安装的实例监听 9527），用安装输出最后打印的账号密码登录（登录页带图形验证码）。
 
-登录方式（`auth.mode`）为必填项，留空时服务无法启动。编辑 `~/.milletcode/config.toml`：
-
-```toml
-[auth]
-mode = "plain"
-
-[auth.plain]
-user = "admin"
-password = "请改成你自己的强密码"
-# 可选：静态 API token（sk- 前缀），供脚本 / CI 调用 REST API 时使用
-# token = "sk-xxxxxxxx"
-```
-
-保存后重启服务：
-
-```bash
-make service-restart
-```
-
-## 4. 访问工作台
-
-浏览器打开 `http://<服务器地址>:3030`，用配置的账号密码登录（登录页带图形验证码）。
-
-- 默认监听 `0.0.0.0:3030`；
-- **服务器部署建议**：不要把 3030 直接暴露到公网。要么只绑定本机（`make service-install HOST=127.0.0.1`）再套 Nginx/Caddy 反向代理加 TLS，要么用防火墙限制来源 IP：
+- 默认监听 `0.0.0.0:9527`；
+- 修改账号密码：编辑 `~/.milletcode/config.toml` 的 `[auth.plain]` 段（可选配 `sk-` 前缀静态 API token，供脚本 / CI 调用 REST API），保存后重启服务；
+- **服务器部署建议**：不要把 9527 直接暴露到公网。要么只绑定本机（`MILLETCODE_HOST=127.0.0.1` 安装）再套 Nginx/Caddy 反向代理加 TLS，要么用防火墙限制来源 IP：
 
   ```bash
-  sudo ufw allow from 192.168.1.0/24 to any port 3030
+  sudo ufw allow from 192.168.1.0/24 to any port 9527
   ```
 
-## 5. 常用服务命令
+## 3. 常用服务命令
 
-| 命令 | 作用 |
+| 操作 | 命令 |
 |---|---|
-| `make service-status` | 查看服务状态 |
-| `make service-stop` | 停止服务 |
-| `make service-start` | 启动服务 |
-| `make service-restart` | 重启服务 |
-| `make update` | 更新代码后重新构建并替换二进制 |
-| `make service-uninstall` | 停止并卸载服务 |
+| 查看状态 | `sudo systemctl status milletcode` |
+| 停止服务 | `sudo systemctl stop milletcode` |
+| 启动服务 | `sudo systemctl start milletcode` |
+| 重启服务 | `sudo systemctl restart milletcode` |
+| 查看日志 | `sudo journalctl -u milletcode -f` |
+| 升级 | 重新执行安装命令 |
+| 卸载 | 停止并禁用服务后删除 `/etc/systemd/system/milletcode.service` 与 `/usr/local/bin/milletcode` |
 
-也可以直接用 systemd：`systemctl --user status milletcode` 之外的系统级操作（`journalctl -u milletcode -f` 看日志）按服务安装方式而定，详见安装时输出。
-
-## 6. 创建第一个会话
+## 4. 创建第一个会话
 
 1. 把一个项目目录加进发现路径（页面上「添加项目」，或直接编辑 `config.toml` 的 `[project.discovery_paths]`，见[远程目录](remote-directories.md)中的配置说明）；
 2. 在项目页选择 Claude Code，创建会话；
@@ -98,7 +59,7 @@ make service-restart
 
 ## 开发模式
 
-日常二次开发用 `make dev`：后端 `127.0.0.1:3030` + 前端热更新 `0.0.0.0:5180`，开发时请访问 `http://127.0.0.1:5180`。
+日常二次开发用 `make dev`：后端 `127.0.0.1:3030` + 前端热更新 `0.0.0.0:5180`，开发时请访问 `http://127.0.0.1:5180`（与脚本安装的 9527 实例互不冲突）。参与贡献请阅读仓库根目录的 [CONTRIBUTING.md](https://github.com/milletcode/milletcode/blob/main/CONTRIBUTING.md)。
 
 ## 安全须知（alpha 特性）
 

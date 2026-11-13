@@ -4,7 +4,7 @@ MilletCode is a self-hosted multi-agent orchestration platform that brings mains
 
 ## What's in this manual
 
-1. [Quick Start (macOS)](quick-start-mac.md) — build from source, configure login, install as a system service
+1. [Quick Start (macOS)](quick-start-mac.md) — one-line install, sign in, manage the service
 2. [Quick Start (Linux)](quick-start-linux.md) — same, systemd edition
 3. [Remote Directories](remote-directories.md) — bring projects on remote hosts into the workbench over SSH
 4. [Multi-Environment Claude](multi-agent-claude.md) — configure multiple Claude instances for different accounts / gateways / CLI paths

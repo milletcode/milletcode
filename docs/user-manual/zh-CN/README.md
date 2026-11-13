@@ -4,7 +4,7 @@ MilletCode 是一个自托管的多Agent调度平台：把 Claude Code 等主流
 
 ## 本手册包含
 
-1. [快速开始（macOS）](quick-start-mac.md) —— 从源码构建、配置登录、安装为系统服务
+1. [快速开始（macOS）](quick-start-mac.md) —— 一条命令安装、登录访问、服务管理
 2. [快速开始（Linux）](quick-start-linux.md) —— 同上，systemd 版
 3. [远程目录](remote-directories.md) —— 把远程主机上的项目通过 SSH 接入工作台
 4. [多环境 Claude 配置](multi-agent-claude.md) —— 为不同账号 / API 网关 / CLI 路径配置多个 Claude 实例
