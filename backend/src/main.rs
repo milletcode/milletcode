@@ -138,7 +138,7 @@ async fn main() -> anyhow::Result<()> {
     let registry = std::sync::Arc::new(AgentRegistry::new());
 
     let claude_adapter = std::sync::Arc::new(ClaudeAdapter::new(event_bus.clone(), config_manager.clone()));
-    let deepseek_adapter = std::sync::Arc::new(DeepSeekAdapter::new(event_bus.clone()));
+    let deepseek_adapter = std::sync::Arc::new(DeepSeekAdapter::new(event_bus.clone(), config_manager.clone()));
     let smartcode_adapter = std::sync::Arc::new(SmartcodeAdapter::new(event_bus.clone(), config_manager.clone(), settings_store.clone()));
     let codex_adapter = std::sync::Arc::new(CodexAdapter::new(event_bus.clone(), config_manager.clone()));
     registry.register(claude_adapter);

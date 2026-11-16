@@ -1389,6 +1389,13 @@ impl SessionManager {
             return Ok(resp);
         }
 
+        // dsh 的 claude_session_id 槽位存的是 acp sessionId（restore/resume 用）。
+        // dsh 原生持久化在 agent 侧，平台侧历史走事件存储；这里只回 model。
+        if agent_id == "dsh" {
+            let model = record.as_ref().and_then(|r| r.model.clone());
+            return Ok(HistoryResponse { messages: Vec::new(), has_more: false, model });
+        }
+
         if is_remote {
             let agent_id = record.as_ref().map(|r| r.agent_id.clone()).unwrap_or_default();
             return self

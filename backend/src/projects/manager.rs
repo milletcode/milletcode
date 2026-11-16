@@ -94,13 +94,31 @@ impl ProjectManager {
     }
 
     /// Run a full scan and replace the project map.
+    ///
+    /// 每条 discovery path 独立线程扫描、各自完成后即时替换该 keyword 的
+    /// 条目：本地路径毫秒级可见，失联的 SSH 主机只拖慢自己的 keyword，
+    /// 不再阻塞整表（启动首扫曾因此空表数分钟）。
     pub fn refresh(&self) {
         let paths = self.config.resolve_project_discovery_paths();
-        let discovered = discovery::scan_projects(&paths);
-        self.projects.clear();
-        for project in discovered {
-            self.projects.insert(project.path.clone(), project);
-        }
+        std::thread::scope(|scope| {
+            for (keyword, (base, hostname, remote_mode, ssh_config_path, is_mobile_home)) in &paths {
+                let projects = self.projects.clone();
+                scope.spawn(move || {
+                    let scanned = if remote_mode == "ssh" {
+                        discovery::scan_remote_directory(base, keyword, hostname, remote_mode, ssh_config_path, *is_mobile_home)
+                    } else {
+                        discovery::scan_local_directory(base, keyword, *is_mobile_home)
+                    };
+                    let count = scanned.len();
+                    let prefix = format!("{}:", keyword);
+                    projects.retain(|k, _| !k.0.starts_with(&prefix));
+                    for project in scanned {
+                        projects.insert(project.path.clone(), project);
+                    }
+                    tracing::info!(keyword = %keyword, count, "discovery path scanned");
+                });
+            }
+        });
         tracing::info!("Project scan complete: found {} projects", self.projects.len());
 
         // Load ports from YAML file (restores previously detected ports)

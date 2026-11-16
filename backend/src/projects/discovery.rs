@@ -1,32 +1,11 @@
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use regex::Regex;
 
 use crate::projects::types::{Project, ProjectPath};
 
-/// Scan immediate subdirectories of each base path.
-/// A directory is considered a project if it contains a README.md.
-/// Supports both local paths and remote paths (format: "hostname:path")
-pub fn scan_projects(base_paths: &HashMap<String, (PathBuf, String, String, String, bool)>) -> Vec<Project> {
-    let mut projects = Vec::new();
-
-    for (keyword, (base, hostname, remote_mode, ssh_config_path, is_mobile_home)) in base_paths {
-        // Scan local or remote directory
-        let scanned = if remote_mode == "ssh" {
-            scan_remote_directory(base, keyword, hostname, remote_mode, ssh_config_path, *is_mobile_home)
-        } else {
-            scan_local_directory(base, keyword, *is_mobile_home)
-        };
-
-        projects.extend(scanned);
-    }
-
-    projects
-}
-
 /// Scan local directory for projects
-fn scan_local_directory(base: &Path, keyword: &str, is_mobile_home: bool) -> Vec<Project> {
+pub fn scan_local_directory(base: &Path, keyword: &str, is_mobile_home: bool) -> Vec<Project> {
     let mut projects = Vec::new();
 
     let Ok(entries) = std::fs::read_dir(base) else {
@@ -141,7 +120,7 @@ pub(crate) fn build_ssh_args(hostname: &str, ssh_config_path: &str) -> Vec<Strin
 }
 
 /// Scan remote directory via SSH
-fn scan_remote_directory(base: &Path, keyword: &str, hostname: &str, remote_mode: &str, ssh_config_path: &str, is_mobile_home: bool) -> Vec<Project> {
+pub fn scan_remote_directory(base: &Path, keyword: &str, hostname: &str, remote_mode: &str, ssh_config_path: &str, is_mobile_home: bool) -> Vec<Project> {
     let mut projects = Vec::new();
 
     let base_str = base.to_string_lossy();
