@@ -262,6 +262,10 @@
     "idleReminderLabel": "闲置提醒",
     "idleReminderHint": "扫描运行中的会话，超过闲置时间的会话进入提醒清单；关闭则完全停用",
     "idleSecondsLabel": "闲置判定时间（秒，30–900）",
+    "notifyLabel": "浏览器通知",
+    "notifyHint": "网页切到后台时，审批、提问或回复完成会通过浏览器通知提醒你",
+    "notifyUnsupported": "当前浏览器不支持通知",
+    "notifyDenied": "通知权限已被浏览器拒绝，请在浏览器的站点设置中允许后重试",
     "resetting": "重置中...",
     "resetDefault": "恢复默认",
     "cmdTitlePlaceholder": "标题",
@@ -287,6 +291,12 @@
     "tasks": "任务数",
     "online": "在线人数",
     "process": "进程数"
+  },
+  "notify": {
+    "approvalTitle": "等待审批",
+    "questionTitle": "向你提问",
+    "completeTitle": "回复完成",
+    "completeBody": "回复已完成，等待你的下一步指示"
   },
   "brand": {
     "name": "MilletCode®",

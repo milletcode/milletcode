@@ -135,7 +135,10 @@ pub fn create_router(state: Arc<AppState>) -> Router<()> {
         // 匿名吐出前端入口页骨架；显式 404 堵住该信息泄露出口。
         .route("/oauth2", get(oauth_proxy::oauth_root_not_found))
         .route("/oauth2/", get(oauth_proxy::oauth_root_not_found))
-        .route("/ws/{org}/{project}/{agent_id}", get(crate::ws::ws_handler));
+        .route("/ws/{org}/{project}/{agent_id}", get(crate::ws::ws_handler))
+        // Broadcast-only channel: approvals/questions/turn-complete reach pages
+        // that hold no per-project connection (/settings, /approvals, ...).
+        .route("/ws/global", get(crate::ws::global_ws_handler));
 
     // Auth middleware must wrap the SPA fallback too — attached after
     // with_state/fallback, otherwise static pages are served unauthenticated.

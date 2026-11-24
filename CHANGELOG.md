@@ -2,6 +2,11 @@
 
 Milletcode® multi-agent scheduling platform — every step forward, written down here. The Chinese edition lives in [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md).
 
+## v0.12.0
+
+- **Browser notifications**: with the page in the background nothing slips by — approvals, agent questions, and finished replies pop up as browser notifications, and one click takes you to the right page; they arrive on every page, and you can enable them in Settings.
+- **Tab reminders clear together**: handle a pending item anywhere and the flashing reminder fades on every tab at once — no per-tab refresh needed.
+
 ## v0.11.1
 
 - **New Codex coding agent (beta)**: one more teammate to pick from when you create a session. You watch it work in real time; when it is unsure it asks you and offers choices; operations that need your sign-off still pop up an approval; after an interruption it picks up right where it left off, and you can switch models mid-run (beta, feedback welcome).

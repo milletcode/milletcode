@@ -19,6 +19,7 @@ import {
   removeUserQuestion,
 } from './stores/approval'
 import { addNotification } from './stores/notification'
+import { notifyAttention } from './attention'
 
 /**
  * Initialize the WebSocket bridge.
@@ -36,6 +37,9 @@ function handleWSMessage(msg: any) {
       const raw = msg.raw || {}
 
       // The CLI's end-of-turn marker (success or error_*). Never a chat message.
+      // The notification fires on the broadcast 'turn_complete' frame instead:
+      // this Output only reaches pages subscribed to the session (i.e. watching
+      // it), while the notification's audience is precisely everyone else.
       if (raw.type === 'result') {
         setTurnComplete(sessionId, true)
         break
@@ -198,6 +202,15 @@ function handleWSMessage(msg: any) {
       break
     }
 
+    case 'turn_complete': {
+      // Broadcast end-of-turn marker — unlike the Output result frame, this
+      // reaches every connection (the global channel included), so the
+      // "reply finished" notification fires even for unwatched sessions.
+      setTurnComplete(sessionId, true)
+      notifyAttention({ kind: 'complete', sessionId, agentName: msg.agent_name })
+      break
+    }
+
     case 'approval_request': {
       // Permission approval via in-band control protocol
       addApproval({
@@ -209,6 +222,13 @@ function handleWSMessage(msg: any) {
         session_key: msg.session_key,
         project_name: msg.project_name,
         agent_name: msg.agent_name,
+      })
+      notifyAttention({
+        kind: 'approval',
+        sessionId,
+        agentName: msg.agent_name,
+        toolName: msg.tool_name,
+        detail: msg.prompt,
       })
       break
     }
@@ -229,6 +249,12 @@ function handleWSMessage(msg: any) {
         questions: msg.questions || [],
         project_name: msg.project_name,
         agent_name: msg.agent_name,
+      })
+      notifyAttention({
+        kind: 'question',
+        sessionId,
+        agentName: msg.agent_name,
+        detail: msg.questions?.[0]?.question,
       })
       break
     }

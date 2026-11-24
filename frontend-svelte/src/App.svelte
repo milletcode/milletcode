@@ -2,10 +2,9 @@
   import { onMount } from 'svelte'
   import { _ } from 'svelte-i18n'
   import { initBridge } from '$lib/wsBridge'
-  import { subscribeWSStatus } from '$lib/wsPool'
-  import { fetchPending, totalPendingCount } from '$lib/stores/approval'
-  import { startFaviconAlert, stopFaviconAlert } from '$lib/favicon'
-  import { pageTitle } from '$lib/pageTitle'
+  import { subscribeWSStatus, initGlobalWebSocket, GLOBAL_WS_KEY } from '$lib/wsPool'
+  import { fetchPending } from '$lib/stores/approval'
+  import { initAttention } from '$lib/attention'
   import Sidebar from '$lib/components/Sidebar.svelte'
   import NotificationBar from '$lib/components/NotificationBar.svelte'
   import DashboardRoute from './routes/DashboardRoute.svelte'
@@ -25,27 +24,36 @@
   let routeParams = $state<Record<string, string>>({})
   let routeVersion = $state(0)
 
-  $effect(() => {
-    const brand = `${$_('brand.name')} ${$_('brand.tagline')}`
-    document.title = $pageTitle ? `${$pageTitle} | ${brand}` : brand
-  })
-
-  $effect(() => {
-    if ($totalPendingCount > 0) startFaviconAlert()
-    else stopFaviconAlert()
-  })
-
   onMount(() => {
     // Initialize WebSocket bridge
     initBridge()
 
+    // Broadcast-only connection: keeps approvals/questions/turn-end markers
+    // flowing on pages that hold no per-project session connection
+    initGlobalWebSocket()
+
+    // Service worker for browser notifications on Android-class browsers
+    // (no page-context Notification constructor there). Also routes
+    // notification clicks back into this SPA via postMessage.
+    if ('serviceWorker' in navigator && window.isSecureContext) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {})
+      navigator.serviceWorker.addEventListener('message', (e) => {
+        if (e.data?.type === 'navigate') navigate(e.data.path)
+      })
+    }
+
+    // Own document.title, favicon alert and browser notifications
+    initAttention(navigate)
+
     // Bootstrap pending decisions (badge/panel survive page refresh)
     fetchPending()
 
-    // Re-bootstrap after a WS reconnect — events broadcast while offline were missed
+    // Re-bootstrap after the broadcast channel reconnects — approvals and
+    // questions broadcast while offline were missed. (The aggregate status
+    // excludes the global channel, so subscribe to it by key.)
     let wasConnected = false
     let refetchTimer: ReturnType<typeof setTimeout> | undefined
-    const unsubscribe = subscribeWSStatus(undefined, (status) => {
+    const unsubscribe = subscribeWSStatus(GLOBAL_WS_KEY, (status) => {
       const nowConnected = status === 'connected'
       if (nowConnected && !wasConnected) {
         clearTimeout(refetchTimer)

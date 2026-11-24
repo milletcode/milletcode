@@ -23,6 +23,11 @@ const statusMap = new Map<string, WSStatus>()
 const statusListeners = new Map<string, Set<StatusListener>>()
 const expectingReplay = new Map<string, Set<string>>()
 
+// Broadcast-only connection: /ws/global carries approvals/questions/turn-complete
+// to pages that hold no per-project connection. Distinct from the '__global__'
+// listener key in subscribeWSStatus (which means "aggregate status").
+export const GLOBAL_WS_KEY = '__global_ws__'
+
 // Consecutive reconnect attempts per projectKey — drives the backoff below.
 // Reset to zero whenever a connection opens successfully.
 const reconnectAttempts = new Map<string, number>()
@@ -49,13 +54,14 @@ export function getWSStatus(projectKey?: string): WSStatus {
   if (projectKey) {
     return statusMap.get(projectKey) || 'disconnected'
   }
-  // Aggregate: connected if ANY connection is connected
-  for (const status of statusMap.values()) {
-    if (status === 'connected') return 'connected'
-  }
-  for (const status of statusMap.values()) {
-    if (status === 'connecting') return 'connecting'
-  }
+  // Aggregate: connected if ANY session-capable connection is connected.
+  // The broadcast-only global channel is excluded — it cannot carry client
+  // traffic (approvals etc.), so counting it would mask real disconnections.
+  const statuses = [...statusMap.entries()]
+    .filter(([key]) => key !== GLOBAL_WS_KEY)
+    .map(([, status]) => status)
+  if (statuses.includes('connected')) return 'connected'
+  if (statuses.includes('connecting')) return 'connecting'
   return 'disconnected'
 }
 
@@ -104,6 +110,13 @@ export function initWebSocket(projectKey: string) {
     })
 }
 
+/**
+ * Open the broadcast-only global connection (App mounts once, lives app-long).
+ */
+export function initGlobalWebSocket() {
+  initWebSocket(GLOBAL_WS_KEY)
+}
+
 function connectWithTicket(projectKey: string, ticket: string) {
   // A newer connection attempt may already be in flight for this key.
   const current = wsPool.get(projectKey)
@@ -112,7 +125,8 @@ function connectWithTicket(projectKey: string, ticket: string) {
   }
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const url = `${protocol}//${window.location.host}/ws/${projectKey}?ticket=${encodeURIComponent(ticket)}`
+  const path = projectKey === GLOBAL_WS_KEY ? '/ws/global' : `/ws/${projectKey}`
+  const url = `${protocol}//${window.location.host}${path}?ticket=${encodeURIComponent(ticket)}`
 
   const ws = new WebSocket(url)
   wsPool.set(projectKey, ws)
@@ -269,8 +283,11 @@ export function sendWSMessage(msg: any, projectKey?: string) {
       return
     }
   }
-  // Fallback: send on any connected WS
-  for (const [, ws] of wsPool.entries()) {
+  // Fallback: send on any connected session-capable WS. The broadcast-only
+  // global channel must be skipped — the backend drains and drops all client
+  // frames there, so an approve routed to it would vanish silently.
+  for (const [key, ws] of wsPool.entries()) {
+    if (key === GLOBAL_WS_KEY) continue
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg))
       return

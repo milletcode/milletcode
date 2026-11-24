@@ -1054,7 +1054,7 @@ impl SessionManager {
         drop(session);
 
         adapter.stop_session(&handle, force).await?;
-        self.pending_controls.remove(session_id);
+        self.clear_pending_broadcast(session_id);
 
         if let Some(mut info) = self.sessions.get_mut(session_id) {
             info.status = SessionStatus::Stopped;
@@ -1542,13 +1542,26 @@ impl SessionManager {
             .collect()
     }
 
+    /// Drop a session's pending controls and broadcast the resolution.
+    /// Non-interactive clearances (stop, restore, fresh spawn) must reach
+    /// every connection — global-channel-only tabs would otherwise flash
+    /// until manually refreshed.
+    fn clear_pending_broadcast(&self, session_id: &SessionId) {
+        if self.pending_controls.remove(session_id).is_some() {
+            self.event_bus.emit(AgentEvent::ApprovalResolved {
+                session_id: session_id.clone(),
+                ts: AgentEvent::now(),
+            });
+        }
+    }
+
     /// Delete a session from the store AND in-memory state.
     /// `composite_key` is the redb key (same as SessionId.0).
     pub fn delete_session(&self, composite_key: &str) -> bool {
         let sid = SessionId(composite_key.to_string());
         // Remove from in-memory maps
         self.sessions.remove(&sid);
-        self.pending_controls.remove(&sid);
+        self.clear_pending_broadcast(&sid);
         // Direct O(1) delete by composite key
         match self.store.delete(composite_key) {
             Ok(deleted) => deleted,
@@ -1756,7 +1769,7 @@ impl SessionManager {
         self.sessions.insert(session_id.clone(), session_info);
         // The restored session replaces a dead process; anything still parked
         // in pending_controls belonged to that process and can never resolve.
-        self.pending_controls.remove(session_id);
+        self.clear_pending_broadcast(session_id);
 
         // Set up event stream processing
         self.spawn_event_task(adapter, handle, session_id.clone());
@@ -1824,7 +1837,7 @@ impl SessionManager {
         };
         self.sessions.insert(session_id.clone(), session_info);
         // Fresh process replaces whatever held the old prompt — same as restore.
-        self.pending_controls.remove(&session_id);
+        self.clear_pending_broadcast(&session_id);
 
         // Update redb with new pid
         let updated_record = SessionRecord {

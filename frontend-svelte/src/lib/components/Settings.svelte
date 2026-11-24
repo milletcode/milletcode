@@ -2,6 +2,11 @@
   import { onMount } from 'svelte'
   import { _ } from 'svelte-i18n'
   import { refreshProjects } from '$lib/stores/project'
+  import {
+    browserNotifyEnabled,
+    requestNotifyPermission,
+    notifyPermissionState,
+  } from '$lib/attention'
 
   interface DiscoveryPathInfo {
     path: string
@@ -134,6 +139,33 @@
   // 端口打开方式：proxy = 反向代理（默认）；tunnel = 客户端隧道
   let openMode = $state<'proxy' | 'tunnel'>('proxy')
   let openModeSaving = $state(false)
+  // 浏览器通知：本地开关 + 浏览器权限四态（unsupported/default/granted/denied）
+  let notifyEnabled = $state(false)
+  let notifyPerm = $state(notifyPermissionState())
+  let notifySaving = $state(false)
+
+  onMount(() => {
+    browserNotifyEnabled.subscribe((v) => {
+      notifyEnabled = v
+    })
+    notifyPerm = notifyPermissionState()
+  })
+
+  async function toggleBrowserNotify() {
+    if (notifySaving || notifyPerm === 'unsupported' || notifyPerm === 'denied') return
+    notifySaving = true
+    try {
+      if (!notifyEnabled) {
+        const result = await requestNotifyPermission()
+        notifyPerm = result === 'granted' ? 'granted' : 'denied'
+        if (result === 'granted') browserNotifyEnabled.set(true)
+      } else {
+        browserNotifyEnabled.set(false)
+      }
+    } finally {
+      notifySaving = false
+    }
+  }
 
   onMount(async () => {
     try {
@@ -773,6 +805,29 @@
           />
         </div>
       {/if}
+    </div>
+
+    <!-- Browser Notifications -->
+    <div class="bg-gray-900 rounded-xl border border-gray-800 p-6 mb-6">
+      <h3 class="text-lg font-semibold text-white mb-4">{$_('settings.notifyLabel')}</h3>
+      <label class="flex items-start gap-2 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={notifyEnabled}
+          onchange={toggleBrowserNotify}
+          disabled={notifySaving || notifyPerm === 'unsupported' || notifyPerm === 'denied'}
+          class="mt-0.5 w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-0 disabled:opacity-50"
+        />
+        <span>
+          <span class="block text-sm text-gray-300">{$_('settings.notifyLabel')}</span>
+          <span class="block text-xs text-gray-500">{$_('settings.notifyHint')}</span>
+          {#if notifyPerm === 'unsupported'}
+            <span class="block text-xs text-yellow-500">{$_('settings.notifyUnsupported')}</span>
+          {:else if notifyPerm === 'denied'}
+            <span class="block text-xs text-yellow-500">{$_('settings.notifyDenied')}</span>
+          {/if}
+        </span>
+      </label>
     </div>
 
     <!-- Custom Commands -->

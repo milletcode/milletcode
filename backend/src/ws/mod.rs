@@ -92,6 +92,18 @@ enum ServerMessage {
     SessionStatus { session_id: String, status: String },
     SessionRestarted { session_id: String },
     SessionComplete { session_id: String, exit_code: i32 },
+    /// End-of-turn marker (CLI result line). Broadcast to every connection
+    /// like approvals: the "reply finished" notification targets sessions the
+    /// user is NOT watching, which by definition have no subscription here.
+    TurnComplete {
+        session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_key: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        project_name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        agent_name: Option<String>,
+    },
     Error { session_id: String, message: String },
     UserQuestion {
         session_id: String,
@@ -190,6 +202,108 @@ fn session_in_scope(composite_key: &str, project_key: &ProjectKey) -> bool {
     k.len() >= 3 && p.len() >= 3 && k[0] == p[0] && k[1] == p[1] && k[2] == p[2]
 }
 
+/// Whether an Output event carries the CLI's end-of-turn result line.
+/// Borrow-only: this guard runs on every output event, high-frequency.
+fn is_result_line(raw: &Option<serde_json::Value>) -> bool {
+    raw.as_ref()
+        .and_then(|r| r.get("type"))
+        .and_then(|t| t.as_str())
+        == Some("result")
+}
+
+/// Broadcast form of an event: messages that must reach EVERY connection
+/// regardless of subscription (message-panel badge, browser notifications for
+/// sessions the user is not watching). None = session-scoped only.
+fn broadcast_form(event: &crate::agents::AgentEvent, state: &AppState) -> Option<ServerMessage> {
+    use crate::agents::AgentEvent;
+    let display_names = |sid: &str| -> (Option<String>, Option<String>, Option<String>) {
+        match state.session_manager.get_session(&SessionId(sid.to_string())) {
+            Some(info) => {
+                let pname = info.project_path.as_ref()
+                    .and_then(|pid| state.project_manager.get(pid))
+                    .map(|p| p.name.clone());
+                (Some(sid.to_string()), pname, Some(info.agent_name.clone()))
+            }
+            None => (None, None, None),
+        }
+    };
+    match event {
+        AgentEvent::GlobalNotification { level, message, .. } => {
+            Some(ServerMessage::GlobalNotification { level: level.clone(), message: message.clone() })
+        }
+        AgentEvent::ApprovalRequest { session_id, prompt, options, request_id, tool_name, .. } => {
+            let (sk, pn, an) = display_names(&session_id.0);
+            Some(ServerMessage::ApprovalRequest {
+                session_id: session_id.0.clone(), prompt: prompt.clone(), options: options.clone(),
+                request_id: request_id.clone(), tool_name: tool_name.clone(),
+                session_key: sk, project_name: pn, agent_name: an,
+            })
+        }
+        AgentEvent::UserQuestion { session_id, tool_use_id, request_id, questions, .. } => {
+            let (sk, pn, an) = display_names(&session_id.0);
+            Some(ServerMessage::UserQuestion {
+                session_id: session_id.0.clone(), tool_use_id: tool_use_id.clone(),
+                request_id: request_id.clone(), questions: questions.clone(),
+                session_key: sk, project_name: pn, agent_name: an,
+            })
+        }
+        AgentEvent::ApprovalResolved { session_id, .. } => {
+            Some(ServerMessage::ApprovalResolved { session_id: session_id.0.clone() })
+        }
+        AgentEvent::Output { session_id, raw, .. } if is_result_line(raw) => {
+            let (sk, pn, an) = display_names(&session_id.0);
+            Some(ServerMessage::TurnComplete {
+                session_id: session_id.0.clone(), session_key: sk, project_name: pn, agent_name: an,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Broadcast-only WS endpoint: /ws/global. Serves pages that are not viewing
+/// any session (settings, approvals) — they still need the broadcast-class
+/// events for badges and browser notifications. No subscriptions, no session
+/// output, exempt from the per-project connection registry.
+pub async fn global_ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| async move {
+        handle_global_ws(socket, state).await;
+    })
+}
+
+async fn handle_global_ws(socket: WebSocket, state: Arc<AppState>) {
+    let (mut tx, mut rx) = socket.split();
+    let mut event_rx = state.event_bus.subscribe();
+    loop {
+        tokio::select! {
+            result = event_rx.recv() => {
+                match result {
+                    Ok(event) => {
+                        if let Some(server_msg) = broadcast_form(&event, &state) {
+                            if let Ok(json) = serde_json::to_string(&server_msg) {
+                                if tx.send(Message::Text(json.into())).await.is_err() { break; }
+                            }
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(key = "global", "WebSocket client lagged, dropped {} events", n);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            // Drain client frames (pings); anything else or a close ends the loop.
+            result = rx.next() => {
+                match result {
+                    Some(Ok(_)) => {}
+                    _ => break,
+                }
+            }
+        }
+    }
+}
+
 async fn handle_ws(socket: WebSocket, state: Arc<AppState>, project_key: ProjectKey) {
     use std::sync::atomic::Ordering;
     let (mut tx, mut rx) = socket.split();
@@ -204,144 +318,89 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, project_key: Project
             result = event_rx.recv() => {
                 match result {
                     Ok(event) => {
+                        // Broadcast-class events (approvals, questions, turn-end
+                        // markers, global notifications) go to every connection
+                        // regardless of subscription: the message-panel badge and
+                        // browser notifications must track all sessions.
+                        if let Some(server_msg) = broadcast_form(&event, &state) {
+                            if let Ok(json) = serde_json::to_string(&server_msg) {
+                                if tx.send(Message::Text(json.into())).await.is_err() { break; }
+                            }
+                        }
+                        // Session-scoped forwarding below. ApprovalResolved and the
+                        // other broadcast-class variants are already covered above;
+                        // their absence here is what prevents double delivery.
+                        let sid = match event.session_id() {
+                            Some(s) => s.0.clone(),
+                            None => continue,
+                        };
+                        // Only forward if this session is in our project scope AND subscribed
+                        if !session_in_scope(&sid, &project_key) {
+                            tracing::debug!(
+                                event_sid = %sid,
+                                key = %project_key,
+                                "WS: event dropped - session not in scope"
+                            );
+                            continue;
+                        }
+                        let is_subscribed = subscribed.contains(&sid);
+                        if !is_subscribed {
+                            tracing::debug!(
+                                event_sid = %sid,
+                                subscribed_count = subscribed.len(),
+                                "WS: event dropped - session not subscribed"
+                            );
+                            continue;
+                        }
                         match event {
-                            crate::agents::AgentEvent::GlobalNotification { level, message, .. } => {
-                                let server_msg = ServerMessage::GlobalNotification { level, message };
+                            crate::agents::AgentEvent::Output { content, raw, .. } => {
+                                tracing::info!(session = %sid, content_len = content.len(), "WS: forwarding output to client");
+                                let server_msg = ServerMessage::Output { session_id: sid.clone(), text: content.clone(), raw: raw.clone() };
                                 if let Ok(json) = serde_json::to_string(&server_msg) {
-                                    let _ = tx.send(Message::Text(json.into())).await;
+                                    if tx.send(Message::Text(json.into())).await.is_err() { break; }
                                 }
                             }
-                            // Control-protocol events are broadcast to every
-                            // connection regardless of subscription: the
-                            // message-panel badge must track all sessions.
-                            crate::agents::AgentEvent::ApprovalRequest { ref session_id, ref prompt, ref options, ref request_id, ref tool_name, .. } => {
-                                let sid = session_id.0.clone();
-                                let session_info = state.session_manager.get_session(&crate::agents::types::SessionId(sid.clone()));
-                                let (sk, pn, an) = match &session_info {
-                                    Some(info) => {
-                                        let pname = info.project_path.as_ref()
-                                            .and_then(|pid| state.project_manager.get(pid))
-                                            .map(|p| p.name.clone());
-                                        (Some(sid.clone()), pname, Some(info.agent_name.clone()))
-                                    }
-                                    None => (None, None, None),
-                                };
-                                let server_msg = ServerMessage::ApprovalRequest {
-                                    session_id: sid.clone(), prompt: prompt.clone(), options: options.clone(),
-                                    request_id: request_id.clone(), tool_name: tool_name.clone(),
-                                    session_key: sk, project_name: pn, agent_name: an,
+                            crate::agents::AgentEvent::SessionComplete { exit_code, .. } => {
+                                let server_msg = ServerMessage::SessionComplete { session_id: sid.clone(), exit_code };
+                                if let Ok(json) = serde_json::to_string(&server_msg) {
+                                    if tx.send(Message::Text(json.into())).await.is_err() { break; }
+                                }
+                            }
+                            crate::agents::AgentEvent::SessionStatus { status, .. } => {
+                                let status_str = serde_json::to_value(&status)
+                                    .ok()
+                                    .and_then(|v| v.as_str().map(|s| s.to_string()))
+                                    .unwrap_or_else(|| format!("{:?}", status));
+                                if status_str == "restarting" {
+                                    let _ = tx.send(Message::Text(
+                                        serde_json::to_string(&ServerMessage::SessionRestarted { session_id: sid.clone() }).unwrap_or_default().into()
+                                    )).await;
+                                }
+                                let server_msg = ServerMessage::SessionStatus { session_id: sid.clone(), status: status_str };
+                                if let Ok(json) = serde_json::to_string(&server_msg) {
+                                    if tx.send(Message::Text(json.into())).await.is_err() { break; }
+                                }
+                            }
+                            crate::agents::AgentEvent::Error { message, .. } => {
+                                // 错误文案保密改写：适配器各自 emit 的 Error 都汇聚到这里，
+                                // 在转发出口统一抹掉 ssh/22 字样
+                                let server_msg = ServerMessage::Error { session_id: sid.clone(), message: crate::sanitize::sanitize_public_error(&message) };
+                                if let Ok(json) = serde_json::to_string(&server_msg) {
+                                    if tx.send(Message::Text(json.into())).await.is_err() { break; }
+                                }
+                            }
+                            crate::agents::AgentEvent::ConfigChanged { model, provider, base_url, .. } => {
+                                let server_msg = ServerMessage::ConfigChanged {
+                                    session_id: sid.clone(),
+                                    model: model.clone(),
+                                    provider: provider.clone(),
+                                    base_url: base_url.clone(),
                                 };
                                 if let Ok(json) = serde_json::to_string(&server_msg) {
                                     if tx.send(Message::Text(json.into())).await.is_err() { break; }
                                 }
                             }
-                            crate::agents::AgentEvent::UserQuestion { ref session_id, ref tool_use_id, ref request_id, ref questions, .. } => {
-                                let sid = session_id.0.clone();
-                                let session_info = state.session_manager.get_session(&crate::agents::types::SessionId(sid.clone()));
-                                let (sk, pn, an) = match &session_info {
-                                    Some(info) => {
-                                        let pname = info.project_path.as_ref()
-                                            .and_then(|pid| state.project_manager.get(pid))
-                                            .map(|p| p.name.clone());
-                                        (Some(sid.clone()), pname, Some(info.agent_name.clone()))
-                                    }
-                                    None => (None, None, None),
-                                };
-                                let server_msg = ServerMessage::UserQuestion {
-                                    session_id: sid, tool_use_id: tool_use_id.clone(),
-                                    request_id: request_id.clone(), questions: questions.clone(),
-                                    session_key: sk, project_name: pn, agent_name: an,
-                                };
-                                if let Ok(json) = serde_json::to_string(&server_msg) {
-                                    if tx.send(Message::Text(json.into())).await.is_err() { break; }
-                                }
-                            }
-                            crate::agents::AgentEvent::ApprovalResolved { ref session_id, .. } => {
-                                let server_msg = ServerMessage::ApprovalResolved { session_id: session_id.0.clone() };
-                                if let Ok(json) = serde_json::to_string(&server_msg) {
-                                    if tx.send(Message::Text(json.into())).await.is_err() { break; }
-                                }
-                            }
-                            ref event => {
-                                let sid = match event.session_id() {
-                                    Some(s) => s.0.clone(),
-                                    None => continue,
-                                };
-                                // Only forward if this session is in our project scope AND subscribed
-                                if !session_in_scope(&sid, &project_key) {
-                                    tracing::debug!(
-                                        event_sid = %sid,
-                                        key = %project_key,
-                                        "WS: event dropped - session not in scope"
-                                    );
-                                    continue;
-                                }
-                                let is_subscribed = subscribed.contains(&sid);
-                                if !is_subscribed {
-                                    tracing::debug!(
-                                        event_sid = %sid,
-                                        subscribed_count = subscribed.len(),
-                                        "WS: event dropped - session not subscribed"
-                                    );
-                                    continue;
-                                }
-                                match event {
-                                    crate::agents::AgentEvent::Output { content, raw, .. } => {
-                                        tracing::info!(session = %sid, content_len = content.len(), "WS: forwarding output to client");
-                                        let server_msg = ServerMessage::Output { session_id: sid.clone(), text: content.clone(), raw: raw.clone() };
-                                        if let Ok(json) = serde_json::to_string(&server_msg) {
-                                            if tx.send(Message::Text(json.into())).await.is_err() { break; }
-                                        }
-                                    }
-                                    crate::agents::AgentEvent::SessionComplete { exit_code, .. } => {
-                                        let server_msg = ServerMessage::SessionComplete { session_id: sid.clone(), exit_code: *exit_code };
-                                        if let Ok(json) = serde_json::to_string(&server_msg) {
-                                            if tx.send(Message::Text(json.into())).await.is_err() { break; }
-                                        }
-                                    }
-                                    crate::agents::AgentEvent::SessionStatus { status, .. } => {
-                                        let status_str = serde_json::to_value(&status)
-                                            .ok()
-                                            .and_then(|v| v.as_str().map(|s| s.to_string()))
-                                            .unwrap_or_else(|| format!("{:?}", status));
-                                        if status_str == "restarting" {
-                                            let _ = tx.send(Message::Text(
-                                                serde_json::to_string(&ServerMessage::SessionRestarted { session_id: sid.clone() }).unwrap_or_default().into()
-                                            )).await;
-                                        }
-                                        let server_msg = ServerMessage::SessionStatus { session_id: sid.clone(), status: status_str };
-                                        if let Ok(json) = serde_json::to_string(&server_msg) {
-                                            if tx.send(Message::Text(json.into())).await.is_err() { break; }
-                                        }
-                                    }
-                                    crate::agents::AgentEvent::Error { message, .. } => {
-                                        // 错误文案保密改写：适配器各自 emit 的 Error 都汇聚到这里，
-                                        // 在转发出口统一抹掉 ssh/22 字样
-                                        let server_msg = ServerMessage::Error { session_id: sid.clone(), message: crate::sanitize::sanitize_public_error(message) };
-                                        if let Ok(json) = serde_json::to_string(&server_msg) {
-                                            if tx.send(Message::Text(json.into())).await.is_err() { break; }
-                                        }
-                                    }
-                                    crate::agents::AgentEvent::ApprovalResolved { .. } => {
-                                        let server_msg = ServerMessage::ApprovalResolved { session_id: sid.clone() };
-                                        if let Ok(json) = serde_json::to_string(&server_msg) {
-                                            if tx.send(Message::Text(json.into())).await.is_err() { break; }
-                                        }
-                                    }
-                                    crate::agents::AgentEvent::ConfigChanged { model, provider, base_url, .. } => {
-                                        let server_msg = ServerMessage::ConfigChanged {
-                                            session_id: sid.clone(),
-                                            model: model.clone(),
-                                            provider: provider.clone(),
-                                            base_url: base_url.clone(),
-                                        };
-                                        if let Ok(json) = serde_json::to_string(&server_msg) {
-                                            if tx.send(Message::Text(json.into())).await.is_err() { break; }
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
+                            _ => {}
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {

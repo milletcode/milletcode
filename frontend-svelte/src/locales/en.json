@@ -262,6 +262,10 @@
     "idleReminderLabel": "Idle reminder",
     "idleReminderHint": "Scan running sessions for inactivity beyond the threshold; sessions in the list become reminder candidates. Turn off to disable entirely",
     "idleSecondsLabel": "Idle threshold (seconds, 30–900)",
+    "notifyLabel": "Browser notifications",
+    "notifyHint": "When the page is in the background, approvals, questions and finished replies reach you via browser notifications",
+    "notifyUnsupported": "This browser does not support notifications",
+    "notifyDenied": "Notification permission was denied — allow it in the browser's site settings and try again",
     "resetting": "Resetting...",
     "resetDefault": "Reset to Default",
     "cmdTitlePlaceholder": "Title",
@@ -287,6 +291,12 @@
     "tasks": "Tasks",
     "online": "Online",
     "process": "Processes"
+  },
+  "notify": {
+    "approvalTitle": "approval needed",
+    "questionTitle": "asked a question",
+    "completeTitle": "reply finished",
+    "completeBody": "The reply is ready and waiting for your next step"
   },
   "brand": {
     "name": "MilletCode®",
