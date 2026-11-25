@@ -2435,15 +2435,16 @@ mod reclaim_tests {
         assert!(!local_process_cmdline_contains(4, "claude"));
     }
 
-    /// Copy /bin/sleep under a name containing "claude" so the spawned process
-    /// passes the reclaim cmdline probe. Backgrounded via sh so it is
-    /// reparented (never our zombie child), matching production targets.
-    fn spawn_claude_named_sleeper(dir: &std::path::Path) -> u32 {
-        let bin = dir.join("claude-reclaim-fixture");
-        std::fs::copy("/bin/sleep", &bin).expect("copy sleep binary");
-        let out = Command::new("/bin/sh")
+    /// Run /bin/sleep under a fake argv[0] containing "claude" so the spawned
+    /// process passes the reclaim cmdline probe. `exec -a` rewrites argv[0]
+    /// in place — no binary copy, so nothing depends on a temp dir being
+    /// executable (Ubuntu 26 runners mount /tmp as tmpfs and refuse to exec
+    /// files copied there). Backgrounded so it is reparented (never our
+    /// zombie child), matching production targets.
+    fn spawn_claude_named_sleeper() -> u32 {
+        let out = Command::new("/bin/bash")
             .arg("-c")
-            .arg(format!("{} 30 >/dev/null 2>&1 & echo $!", bin.display()))
+            .arg("exec -a claude-reclaim-fixture /bin/sleep 30 >/dev/null 2>&1 & echo $!")
             .output()
             .expect("spawn fixture");
         String::from_utf8_lossy(&out.stdout)
@@ -2485,9 +2486,7 @@ mod reclaim_tests {
 
     #[test]
     fn local_reclaim_target_matches_accepts_spawn_time_and_rejects_reuse_stamp() {
-        let dir = std::env::temp_dir().join(format!("reclaim-fixture-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let pid = spawn_claude_named_sleeper(&dir);
+        let pid = spawn_claude_named_sleeper();
         std::thread::sleep(std::time::Duration::from_millis(100));
 
         let stamp = local_process_start_time(pid).expect("live fixture has a start time");
@@ -2501,14 +2500,11 @@ mod reclaim_tests {
         assert!(!local_reclaim_target_matches(&record, pid));
 
         kill_pid(pid);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn local_reclaim_target_matches_legacy_record_keeps_cmdline_only() {
-        let dir = std::env::temp_dir().join(format!("reclaim-fixture-legacy-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let pid = spawn_claude_named_sleeper(&dir);
+        let pid = spawn_claude_named_sleeper();
         std::thread::sleep(std::time::Duration::from_millis(100));
 
         // Legacy record (no captured stamp): historical best-effort behavior
@@ -2519,7 +2515,6 @@ mod reclaim_tests {
         assert!(!local_process_cmdline_contains(pid, "definitely-not-running"));
 
         kill_pid(pid);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

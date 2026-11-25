@@ -15,8 +15,6 @@ concurrency:
 
 permissions:
   contents: read
-  # 读取本 workflow 自身的 job 日志，用于失败时把错误回显成注解
-  actions: read
 
 env:
   IMAGE: milletcode/milletcode
@@ -38,34 +36,17 @@ jobs:
           mkdir -p frontend-svelte/dist
           printf '<!doctype html><html><body></body></html>' > frontend-svelte/dist/index.html
       - name: cargo test
-        run: cargo test --workspace --locked --no-fail-fast
-      # 失败时拉取本 job 自己的日志，把 error / 失败测试名回显为注解
-      # （注解可匿名从 API 读取，无需到网页翻日志）
+        run: |
+          set -o pipefail
+          cargo test --workspace --locked --no-fail-fast 2>&1 | tee /tmp/cargo-test.log
+      # 失败时把失败测试名/panic 回显为注解（直接读上一步 tee 下的本地文件）。
+      # 旧方案经 API 拉本 job 日志，在部分 runner 上 403，诊断步骤自己先红，
+      # 失败原因完全不可见。
       - name: Surface failures as annotations
         if: failure()
         run: |
-          set -u
-          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions"
-          # GITHUB_TOKEN 不是环境变量，要用表达式显式取（permissions 块已声明 actions: read）
-          auth="Authorization: Bearer ${{ github.token }}"
-          job_id=$(curl -sf -H "$auth" "$api/runs/${GITHUB_RUN_ID}/jobs" \
-            | python3 -c 'import json,sys; print([j["id"] for j in json.load(sys.stdin)["jobs"] if j["name"].startswith("test-backend")][0])')
-          # 日志端点 302 到带签名的 blob URL，带 Authorization 头跟随重定向会被拒：
-          # 先取 redirect_url，再裸请求
-          log_url=$(curl -sf -H "$auth" -o /dev/null -w '%{redirect_url}' "$api/jobs/${job_id}/logs")
-          if [ -n "$log_url" ]; then
-            curl -sfL "$log_url" -o /tmp/job.log
-          else
-            curl -sf -H "$auth" "$api/jobs/${job_id}/logs" -o /tmp/job.log
-          fi
-          # 本步骤纯属诊断：job 已被 cargo test 判红，日志拉不到时不应再标红一次
-          if [ ! -s /tmp/job.log ]; then
-            echo "::warning::未能拉取本 job 日志，跳过失败注解回显"
-            exit 0
-          fi
-          # 下载的原始日志每行带 ISO 时间戳前缀，先剥掉再匹配行首
-          sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z[[:space:]]*//' /tmp/job.log > /tmp/job.clean.log || true
-          grep -E '^(error|failures:|---- |test result: FAILED|thread .* panicked)' -A 2 /tmp/job.clean.log \
+          sed -E $'s/\x1b\[[0-9;]*[A-Za-z]//g' /tmp/cargo-test.log > /tmp/cargo-test.clean.log
+          grep -E '^(error|failures:|---- |test result: FAILED|thread .* panicked)' -A 2 /tmp/cargo-test.clean.log \
             | head -24 | sed 's/::/ | /g' \
             | while IFS= read -r line; do
                 [ -n "$line" ] && echo "::error::${line}"
