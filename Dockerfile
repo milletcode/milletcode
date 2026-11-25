@@ -1,4 +1,7 @@
 # syntax=docker/dockerfile:1
+#
+# 国内构建版（本地 / 国内 CI）：npm、cargo、apk 均走国内镜像源。
+# GitHub Actions 构建用的是 Dockerfile.en（全官方源）：改动本文件时必须同步改它。
 
 # Stage 1: Build frontend
 FROM node:22-alpine AS frontend-builder

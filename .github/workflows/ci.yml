@@ -103,6 +103,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          # 海外 runner 走全官方源的版本，避免国内镜像偶发抖动
+          file: Dockerfile.en
           platforms: linux/${{ matrix.arch }}
           push: true
           load: true

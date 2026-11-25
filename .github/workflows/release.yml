@@ -1,13 +1,16 @@
 name: Release
 
-# 发布规则：只在 staging / main 分支上做——push 即触发，无需打 tag。
-# 版本号 = CHANGELOG.md 顶部版本段（## vX.Y.Z...）；该版本已有 Release 则跳过全部下游。
-# tag 是发布的产物：gh release create --target 自动打在本次推送的提交上。
+# 发布规则：staging 推送只跑 CI（见 ci.yml），不触发发布。发布只由两类事件驱动：
+#   1) push 到 main —— 版本号 = CHANGELOG.md 顶部版本段（## vX.Y.Z...），tag 是
+#      发布产物：gh release create --target 自动打在本次推送的提交上；
+#   2) push 一个 v* tag —— 手动补发/重发指定版本，版本 = tag 名。
+# 该版本已有 Release 则跳过全部下游（幂等，不重复构建）。
 on:
   push:
-    branches: [main, staging]
+    branches: [main]
+    tags: ['v*']
 
-# staging 与 main 同 sha 互推是常态，串行去重：后到的 run 会看到先到的 Release 而跳过
+# 同一版本重复触发（main 推送后又推同 sha 的 tag）串行去重：后到的 run 会跳过
 concurrency:
   group: release
   cancel-in-progress: false
@@ -20,7 +23,7 @@ env:
   IMAGE: milletcode/milletcode
 
 jobs:
-  # 守门 + 版本解析：CHANGELOG 顶部段即本次要发的版本；已发过则下游全部跳过（不浪费构建时长）
+  # 守门 + 版本解析：tag 事件取 tag 名，main 推送取 CHANGELOG 顶部段；已发过则下游全部跳过
   notes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -37,10 +40,15 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -eu
-          TAG=$(awk '/^## v/ { print $2; exit }' CHANGELOG.md)
+          # tag 事件：版本 = tag 名；main 推送：版本 = CHANGELOG 顶部段
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG=$(awk '/^## v/ { print $2; exit }' CHANGELOG.md)
+          fi
           case "$TAG" in
             v[0-9]*) ;;
-            *) echo "::error::CHANGELOG.md 顶部没有可识别的版本段（## vX.Y.Z...）" ; exit 1 ;;
+            *) echo "::error::无法确定发布版本：tag 事件看 tag 名，分支事件看 CHANGELOG.md 顶部版本段（## vX.Y.Z...）" ; exit 1 ;;
           esac
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -99,6 +107,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          # 海外 runner 走全官方源的版本，避免国内镜像偶发抖动
+          file: Dockerfile.en
           platforms: linux/${{ matrix.arch }}
           push: true
           load: true
@@ -189,7 +199,8 @@ jobs:
             "${IMAGE}:${TAG}-amd64" \
             "${IMAGE}:${TAG}-arm64"
 
-  # 建 Release：CHANGELOG 段 + 安装脚注，四平台包 + checksums；tag 自动打在本次推送的提交上
+  # 建 Release：CHANGELOG 段 + 安装脚注，四平台包 + checksums；
+  # main 推送时 tag 自动打在本次推送的提交上，tag 事件则复用已存在的 tag
   release:
     needs: [notes, build-linux, build-macos, merge]
     if: needs.notes.outputs.skip != 'true'
